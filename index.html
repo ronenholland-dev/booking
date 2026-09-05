@@ -611,6 +611,18 @@ const Debug = (() => {
    ══════════════════════════════════════════════════════════════════ */
 const Cal = (() => {
 
+  /* ── לוז מ-Firestore ─────────────────────────────────────────────
+     עד שלב 4 השעות היו קבועות בקוד. מעכשיו הן מגיעות ממסך ההגדרות:
+       calendar_settings/weekly  — הלוז השבועי הקבוע
+       overrides/{YYYY-MM-DD}    — חריג ליום ספציפי, דורס אותו
+     CONFIG.hours נשאר כברירת מחדל אם עוד לא נשמר כלום, וכגיבוי אם
+     Firestore לא זמין — כך שהאפליקציה אף פעם לא נשארת בלי לוז. */
+  let sched = { weekly: null, overrides: {} };
+  const setSchedule = (s) => {
+    if (s && s.weekly)    sched.weekly = s.weekly;
+    if (s && s.overrides) sched.overrides = s.overrides;
+  };
+
   const iso = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   const toMin = (hhmm) => { const [h,m] = hhmm.split(':').map(Number); return h*60+m; };
   const toHHMM = (min) => String(Math.floor(min/60)).padStart(2,'0') + ':' + String(min%60).padStart(2,'0');
@@ -618,14 +630,22 @@ const Cal = (() => {
      שמות שדות במסמך Firestore עדיפים בלי תווים מיוחדים. */
   const unitKey = (min) => String(Math.floor(min/60)).padStart(2,'0') + String(min%60).padStart(2,'0');
 
-  /* שעות הפעילות בפועל לתאריך: ברירת המחדל השבועית, ואז override אם קיים */
+  /* שעות הפעילות בפועל לתאריך.
+     סדר העדיפויות: חריג ליום זה ← לוז שבועי שמור ← ברירת המחדל בקוד. */
   function windowFor(date) {
-    const ov = CONFIG.overrides[iso(date)];
+    const ov = sched.overrides[iso(date)] || CONFIG.overrides[iso(date)];
     if (ov) {
       if (ov.closed) return null;
       if (ov.open && ov.close) return { open: ov.open, close: ov.close };
     }
-    return CONFIG.hours[date.getDay()] || null;
+    const weekly = sched.weekly || CONFIG.hours;
+    return weekly[date.getDay()] || null;
+  }
+
+  /* יחידות שנחסמו ידנית ליום זה במסך ההגדרות */
+  function blockedFor(date) {
+    const ov = sched.overrides[iso(date)];
+    return new Set((ov && ov.blocked) || []);
   }
 
   /* דמו: תפוסה דטרמיניסטית לפי hash — הלוח נראה אמין ולא משתנה ברענון */
@@ -658,7 +678,8 @@ const Cal = (() => {
 
     const step   = CONFIG.baseGridMin;
     const needed = Math.ceil(durationMin / step);
-    const busy   = occupiedUnits || (CONFIG.demoMode ? demoUnits(iso(date), w) : new Set());
+    const busy   = new Set(occupiedUnits || (CONFIG.demoMode ? demoUnits(iso(date), w) : []));
+    blockedFor(date).forEach(u => busy.add(u));   // חסימות ידניות ממסך ההגדרות
     const limit  = Date.now() + CONFIG.minLeadHours * 3600 * 1000;
     const closeM = toMin(w.close);
     const out    = [];
@@ -687,7 +708,8 @@ const Cal = (() => {
 
   const hasFree = (date, dur, busy) => slotsFor(date, dur, busy).length > 0;
 
-  return { iso, windowFor, slotsFor, unitsFor, hasFree, demoUnits, toMin, toHHMM, unitKey };
+  return { iso, windowFor, blockedFor, slotsFor, unitsFor, hasFree,
+           demoUnits, toMin, toHHMM, unitKey, setSchedule };
 })();
 
 
@@ -741,6 +763,23 @@ const Store = (() => {
                        fs.where('date', '>=', fromIso), fs.where('date', '<=', toIso));
     (await fs.getDocs(q)).forEach(d => map.set(d.id, unitsFromDoc(d.data())));
     return map;
+  }
+
+  /* הלוז השבועי + כל החריגים בטווח שמוצג בלוח */
+  async function schedule(fromIso, toIso) {
+    if (CONFIG.demoMode) return null;
+    await init();
+    const out = { weekly: null, overrides: {} };
+    try {
+      const w = await fs.getDoc(fs.doc(db, 'calendar_settings', 'weekly'));
+      if (w.exists() && w.data().hours) out.weekly = w.data().hours;
+    } catch (e) { Debug.log('לוז שבועי לא נטען', String(e)); }
+    try {
+      const q = fs.query(fs.collection(db, 'overrides'),
+                         fs.where('date', '>=', fromIso), fs.where('date', '<=', toIso));
+      (await fs.getDocs(q)).forEach(d => { out.overrides[d.id] = d.data(); });
+    } catch (e) { Debug.log('חריגים לא נטענו', String(e)); }
+    return out;
   }
 
   async function day(dateIso) {
@@ -828,7 +867,7 @@ const Store = (() => {
     }
   }
 
-  return { init, range, day, hold, release, book };
+  return { init, range, day, schedule, hold, release, book };
 })();
 
 
@@ -1010,8 +1049,9 @@ async function loadMonth() {
   const from = Cal.iso(new Date(m.getFullYear(), m.getMonth(), 1));
   const to   = Cal.iso(new Date(m.getFullYear(), m.getMonth()+1, 0));
   try {
-    const map = await Store.range(from, to);
+    const [map, sch] = await Promise.all([Store.range(from, to), Store.schedule(from, to)]);
     map.forEach((v, k) => state.busy.set(k, v));
+    if (sch) Cal.setSchedule(sch);
     if (state.screen === 's4') { paintMonth(); paintSlots(); }
   } catch (e) { Debug.log('טעינת זמינות נכשלה', String(e)); }
 }

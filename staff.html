@@ -170,8 +170,8 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
   font-family:inherit;font-size:14px;cursor:pointer;position:relative;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0}
 .mcal .d:hover{background:var(--grey-bg)}
-.mcal .d.closed{background:#fafafa;color:#c9cdd3;cursor:default}
-.mcal .d.closed:hover{background:#fafafa}
+.mcal .d.closed{background:#fafafa;color:#c9cdd3}
+.mcal .d.ovr{box-shadow:inset 0 -3px 0 var(--orange)}
 .mcal .d.today{outline:2px solid var(--sage);outline-offset:-2px;font-weight:700}
 .mcal .d.sel{background:var(--navy);color:#fff;font-weight:700}
 .mcal .d.blank{background:transparent;cursor:default}
@@ -194,6 +194,42 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .free button:hover{background:var(--mint)}
 .closedday{text-align:center;color:var(--muted);background:var(--grey-bg);
   border-radius:var(--radius);padding:16px;font-size:15px;margin-bottom:16px}
+
+/* ── מסך ההגדרות ── */
+.setnote{background:var(--mint);border-radius:8px;padding:11px 14px;
+  font-size:14px;color:var(--navy);margin-bottom:16px}
+.dayedit{border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:24px}
+.dayedit h3{margin:0 0 10px;font-size:17px;color:var(--navy)}
+.dayedit .state{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.tag{font-size:13px;padding:4px 11px;border-radius:20px;border:1px solid var(--line);color:var(--muted)}
+.tag.def{background:#fff}
+.tag.closed{background:var(--grey-bg);color:var(--text)}
+.tag.custom{background:var(--mint);border-color:var(--sage);color:var(--navy);font-weight:700}
+.tag.part{background:var(--orange-bg);border-color:var(--orange);color:#8a5f14}
+.dayacts{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:12px}
+.dayacts button{background:#fff;border:1px solid var(--navy);color:var(--navy);
+  border-radius:8px;padding:9px 14px;font:500 14px inherit;cursor:pointer}
+.dayacts button:hover{background:#f4f7fb}
+.hint{font-size:13.5px;color:var(--muted);margin-bottom:10px;line-height:1.5}
+.units{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
+.unit{border:1px solid var(--line);background:#fff;border-radius:7px;
+  padding:9px 2px;font:500 14px inherit;cursor:pointer;color:var(--text)}
+.unit.on:hover{background:var(--mint);border-color:var(--sage)}
+.unit.off{background:var(--grey-bg);color:#b0b5bb;text-decoration:line-through;border-style:dashed}
+.unit.taken{background:var(--orange-bg);border-color:var(--orange);color:#8a5f14;cursor:not-allowed}
+
+.weekly{border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.weekly h3{margin:0 0 6px;font-size:17px;color:var(--navy)}
+.weekly table{width:100%;border-collapse:collapse;margin-bottom:14px}
+.weekly th{text-align:right;font-size:13px;color:var(--muted);font-weight:500;padding:6px 4px}
+.weekly td{padding:5px 4px;font-size:15px}
+.weekly td:first-child{font-weight:700;color:var(--navy);white-space:nowrap}
+.weekly input[type=time]{font-family:inherit;font-size:15px;padding:7px 9px;
+  border:1px solid var(--line);border-radius:7px;width:100%;background:#fff}
+.wkoff{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);white-space:nowrap}
+.wkoff input{width:17px;height:17px;accent-color:var(--sage)}
+.weekly button{background:var(--navy);color:#fff;border:none;border-radius:8px;
+  padding:12px 20px;font:700 15px inherit;cursor:pointer}
 .day-head{font-weight:700;color:var(--navy);margin:22px 0 11px;font-size:16px}
 .day-head:first-child{margin-top:0}
 
@@ -251,6 +287,7 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
       <button class="tab on" data-tab="todo">לטיפול <span class="n" id="nTodo">0</span></button>
       <button class="tab" data-tab="day">יומן</button>
       <button class="tab" data-tab="cancelled">מבוטלים <span class="n" id="nCanc">0</span></button>
+      <button class="tab" data-tab="settings">הגדרות</button>
     </div>
     <div class="bar">
       <input type="search" id="search" placeholder="🔍 חיפוש לפי מספר נייד…" inputmode="numeric">
@@ -271,7 +308,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, query, where, orderBy, limit, onSnapshot,
-         doc, getDoc, runTransaction, Timestamp }
+         doc, getDoc, getDocs, setDoc, deleteDoc, runTransaction, Timestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 /* ══════════════════════════════════════════════════════════════════
@@ -451,6 +488,7 @@ onAuthStateChanged(auth, (user) => {
   }
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   $('whoami').textContent = user.email;
+  loadSchedule().then(render);
   subscribe();
 });
 
@@ -628,6 +666,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   state.tab = b.dataset.tab;
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
   $('daynav').classList.toggle('hidden', state.tab !== 'day');
+  document.querySelector('.bar').classList.toggle('hidden', state.tab === 'settings');
   render();
 });
 $('search').oninput = (e) => { state.search = e.target.value.replace(/\D/g,''); render(); };
@@ -666,6 +705,7 @@ function render() {
   $('dLbl').textContent = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
 
   // לשונית היומן: לוח חודשי + כל היום, פנויים ותפוסים כאחד
+  if (state.tab === 'settings') { renderSettings(); return; }
   if (state.tab === 'day' && !state.search) { renderDayView(); return; }
 
   const list = visible();
@@ -697,6 +737,199 @@ function render() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   6ד. לשונית ההגדרות — שליטה על הלוז
+   ─────────────────────────────────────────────────────────────────
+   שני מפלסים, בדיוק כפי שהוגדר באיפיון:
+     · לוז שבועי קבוע  → calendar_settings/weekly
+     · חריג ליום ספציפי → overrides/{YYYY-MM-DD}, דורס את הקבוע
+
+   עקרון־על: שינוי ידני תמיד גובר, גם כשהוא סותר את ברירת המחדל.
+   המערכת שואלת פעם אחת ואז מבצעת, בלי לחסום.
+   ══════════════════════════════════════════════════════════════════ */
+let schedule = { weekly: null, overrides: {} };
+let schedLoaded = false;
+
+async function loadSchedule() {
+  try {
+    const w = await getDoc(doc(db, 'calendar_settings', 'weekly'));
+    schedule.weekly = (w.exists() && w.data().hours) ? w.data().hours
+                                                     : JSON.parse(JSON.stringify(CFG.hours));
+    const snap = await getDocs(collection(db, 'overrides'));
+    schedule.overrides = {};
+    snap.forEach(d => { schedule.overrides[d.id] = d.data(); });
+    schedLoaded = true;
+  } catch (e) {
+    console.error(e);
+    schedule.weekly = JSON.parse(JSON.stringify(CFG.hours));
+    toast('טעינת הלוז נכשלה — מוצגת ברירת המחדל');
+  }
+}
+
+/* חלון הפעילות בפועל ליום — אותה לוגיקה בדיוק כמו באפליקציית המטופל */
+function windowFor(date) {
+  const ov = schedule.overrides[isoOf(date)];
+  if (ov) {
+    if (ov.closed) return null;
+    if (ov.open && ov.close) return { open: ov.open, close: ov.close };
+  }
+  return (schedule.weekly || CFG.hours)[date.getDay()] || null;
+}
+const blockedFor = (date) => {
+  const ov = schedule.overrides[isoOf(date)];
+  return new Set((ov && ov.blocked) || []);
+};
+
+async function saveOverride(iso, patch) {
+  const cur = schedule.overrides[iso] || { date: iso };
+  const next = Object.assign({}, cur, patch, { date: iso });
+  // מסמך שאין בו שום חריגה — נמחק, כדי שהיום יחזור לברירת המחדל
+  const empty = !next.closed && !next.open && !(next.blocked && next.blocked.length);
+  try {
+    if (empty) { await deleteDoc(doc(db,'overrides',iso)); delete schedule.overrides[iso]; }
+    else       { await setDoc(doc(db,'overrides',iso), next); schedule.overrides[iso] = next; }
+    render();
+    toast('נשמר');
+  } catch (e) { console.error(e); toast('השמירה נכשלה'); }
+}
+
+async function saveWeekly(hours) {
+  try {
+    await setDoc(doc(db,'calendar_settings','weekly'), { hours });
+    schedule.weekly = hours;
+    render();
+    toast('הלוז השבועי נשמר');
+  } catch (e) { console.error(e); toast('השמירה נכשלה'); }
+}
+
+async function renderSettings() {
+  const host = $('list');
+  if (!schedLoaded) {
+    host.innerHTML = '<div class="empty">טוען את הלוז…</div>';
+    await loadSchedule();
+  }
+  if (!state.calMonth) state.calMonth = new Date(state.day.getFullYear(), state.day.getMonth(), 1);
+
+  host.innerHTML =
+    '<div class="setnote">שינוי כאן משפיע מיד על מה שהמטופל רואה באפליקציה.</div>' +
+    monthCalHtml(true) +
+    '<div id="dayEdit"></div>' +
+    weeklyHtml();
+  wireMonthCal();
+  paintDayEdit();
+  wireWeekly();
+}
+
+function weeklyHtml() {
+  const w = schedule.weekly || CFG.hours;
+  const rows = [0,1,2,3,4,5,6].map(i => {
+    const h = w[i];
+    return '<tr><td>' + DOW[i] + '</td>' +
+      '<td><input type="time" data-wk="'+i+'" data-f="open"  value="'+(h?h.open:'')+'"></td>' +
+      '<td><input type="time" data-wk="'+i+'" data-f="close" value="'+(h?h.close:'')+'"></td>' +
+      '<td><label class="wkoff"><input type="checkbox" data-wkoff="'+i+'"'+(h?'':' checked')+'> סגור</label></td>' +
+      '</tr>';
+  }).join('');
+  return '<div class="weekly">' +
+    '<h3>לוז שבועי קבוע</h3>' +
+    '<p class="hint">זו ברירת המחדל לכל שבוע. חריג ליום מסוים נקבע בלוח שלמעלה וגובר עליה.</p>' +
+    '<table>' +
+      '<tr><th>יום</th><th>פתיחה</th><th>סגירה</th><th></th></tr>' + rows +
+    '</table>' +
+    '<button id="saveWeekly">שמור לוז שבועי</button></div>';
+}
+
+function wireWeekly() {
+  const btn = $('saveWeekly');
+  if (!btn) return;
+  btn.onclick = () => {
+    const out = {};
+    for (let i = 0; i < 7; i++) {
+      const off = $('list').querySelector('[data-wkoff="'+i+'"]').checked;
+      if (off) { out[i] = null; continue; }
+      const o = $('list').querySelector('[data-wk="'+i+'"][data-f="open"]').value;
+      const c = $('list').querySelector('[data-wk="'+i+'"][data-f="close"]').value;
+      if (!o || !c || o >= c) { toast('שעות לא תקינות ביום ' + DOW[i]); return; }
+      out[i] = { open: o, close: c };
+    }
+    saveWeekly(out);
+  };
+}
+
+function paintDayEdit() {
+  const box = $('dayEdit');
+  const d = state.day, iso = isoOf(d);
+  const ov = schedule.overrides[iso] || {};
+  const defW = (schedule.weekly || CFG.hours)[d.getDay()];
+  const w = windowFor(d);
+  const label = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1) + '.' + d.getFullYear();
+
+  // יחידות שכבר תפוסות בתור אמיתי — אי אפשר לחסום אותן
+  const taken = new Set();
+  appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === iso)
+       .forEach(a => unitsOf(a).forEach(u => taken.add(u)));
+  const blocked = blockedFor(d);
+
+  let slots = '';
+  if (w) {
+    for (let m = toMin(w.open); m < toMin(w.close); m += CFG.baseGridMin) {
+      const k = pad(Math.floor(m/60)) + pad(m%60);
+      const t = pad(Math.floor(m/60)) + ':' + pad(m%60);
+      const cls = taken.has(k) ? 'taken' : (blocked.has(k) ? 'off' : 'on');
+      slots += '<button class="unit '+cls+'" data-unit="'+k+'"'+(taken.has(k)?' disabled':'')+
+               ' title="'+(taken.has(k)?'תפוס בתור':'לחיצה חוסמת/משחררת')+'">'+t+'</button>';
+    }
+  }
+
+  box.innerHTML =
+    '<div class="dayedit">' +
+      '<h3>' + esc(label) + '</h3>' +
+      '<div class="state">' +
+        (ov.closed ? '<span class="tag closed">סגור ידנית</span>'
+         : ov.open ? '<span class="tag custom">שעות חריגות ' + esc(ov.open) + '–' + esc(ov.close) + '</span>'
+         : defW    ? '<span class="tag def">לפי הלוז הקבוע ' + esc(defW.open) + '–' + esc(defW.close) + '</span>'
+                   : '<span class="tag closed">סגור בלוז הקבוע</span>') +
+        (blocked.size ? '<span class="tag part">' + blocked.size + ' סלוטים חסומים</span>' : '') +
+      '</div>' +
+      '<div class="dayacts">' +
+        (w ? '<button data-set="close">סגור את כל היום</button>' : '') +
+        (!w || ov.closed ? '<button data-set="open">פתח את היום</button>' : '') +
+        (ov.open || ov.closed || blocked.size
+           ? '<button data-set="reset">החזר לברירת המחדל</button>' : '') +
+      '</div>' +
+      (w ? '<div class="hint">לחיצה על שעה חוסמת אותה למטופלים. שעה תפוסה בתור לא ניתנת לחסימה.</div>' +
+           '<div class="units">' + slots + '</div>'
+         : '<div class="hint">היום סגור. "פתח את היום" יאפשר לקבוע בו תורים.</div>') +
+    '</div>';
+
+  box.querySelectorAll('[data-unit]:not([disabled])').forEach(b => b.onclick = () => {
+    const k = b.dataset.unit;
+    const cur = new Set(blockedFor(d));
+    cur.has(k) ? cur.delete(k) : cur.add(k);
+    saveOverride(iso, { blocked: [...cur].sort() });
+  });
+
+  box.querySelectorAll('[data-set]').forEach(b => b.onclick = () => {
+    const act = b.dataset.set;
+    if (act === 'reset') { saveOverride(iso, { closed:false, open:null, close:null, blocked:[] }); return; }
+    if (act === 'close') {
+      if (taken.size && !confirm('ביום זה כבר יש ' + taken.size/1 + ' יחידות תפוסות בתורים.\n' +
+          'סגירת היום לא מבטלת אותם — היא רק מונעת קביעת תורים חדשים.\n\nלהמשיך?')) return;
+      saveOverride(iso, { closed:true, open:null, close:null });
+      return;
+    }
+    if (act === 'open') {
+      const def = defW || { open:'09:00', close:'14:00' };
+      if (!defW && !confirm('היום הזה סגור בלוז הקבוע.\nפתיחה שלו סותרת את ברירת המחדל.\n\nלהמשיך?')) return;
+      const o = prompt('שעת פתיחה', def.open); if (!o) return;
+      const c = prompt('שעת סגירה', def.close); if (!c) return;
+      if (o >= c) { toast('שעת הסגירה חייבת להיות אחרי הפתיחה'); return; }
+      saveOverride(iso, { closed:false, open:o, close:c });
+    }
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
    6ג. לשונית היומן — לוח חודשי + ציר היום המלא
    מציג את היום כרצף: כל תור תפוס במקומו האמיתי עם פרטי המטופל
    ובצבע לפי אותה חוקיות של "לטיפול", וכל פער פנוי כשורה נפרדת
@@ -712,7 +945,7 @@ function renderDayView() {
   paintTimeline();
 }
 
-function monthCalHtml() {
+function monthCalHtml(forSettings) {
   const m = state.calMonth;
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
   const days  = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
@@ -730,15 +963,17 @@ function monthCalHtml() {
   for (let dd = 1; dd <= days; dd++) {
     const date = new Date(m.getFullYear(), m.getMonth(), dd);
     const iso  = isoOf(date);
-    const closed = !CFG.hours[date.getDay()];
+    const closed = !windowFor(date);
+    const ovr    = !!schedule.overrides[iso];
     const sel  = iso === isoOf(state.day);
     const isToday = iso === isoOf(today);
     const sts = byDay[iso] || [];
     const dots = ['red','orange','green']
       .filter(c => sts.includes(c))
       .map(c => '<i class="'+c+'"></i>').join('');
-    cells += '<button class="d'+(closed?' closed':'')+(sel?' sel':'')+(isToday?' today':'')+'"' +
-             ' data-day="'+iso+'"><span>'+dd+'</span><span class="dots">'+dots+'</span></button>';
+    cells += '<button class="d'+(closed?' closed':'')+(sel?' sel':'')+(isToday?' today':'')+
+             (ovr?' ovr':'')+'" data-day="'+iso+'"><span>'+dd+'</span>' +
+             '<span class="dots">'+(forSettings?'':dots)+'</span></button>';
   }
 
   return '<div class="mcal">' +
@@ -757,7 +992,7 @@ function wireMonthCal() {
   $('list').querySelectorAll('[data-mon]').forEach(b => b.onclick = () => {
     const m = state.calMonth;
     state.calMonth = new Date(m.getFullYear(), m.getMonth() + (+b.dataset.mon), 1);
-    renderDayView();
+    render();
   });
   $('list').querySelectorAll('[data-day]').forEach(b => b.onclick = () => {
     const [y,mo,dd] = b.dataset.day.split('-').map(Number);
@@ -769,7 +1004,7 @@ function wireMonthCal() {
 function paintTimeline() {
   const box = $('dayTimeline');
   const d = state.day;
-  const w = CFG.hours[d.getDay()];
+  const w = windowFor(d);
   const iso = isoOf(d);
 
   const dayAppts = appts
@@ -1123,7 +1358,7 @@ function openManual(from, preset) {
     const box = $('mSlots');
     const [y,mo,dd] = pick.date.split('-').map(Number);
     const day = new Date(y, mo-1, dd);
-    const w = CFG.hours[day.getDay()];
+    const w = windowFor(day);
 
     if (!w) { box.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:15px">'+
       'יום זה סגור בלוז הקבוע. אפשר בכל זאת לבחור שעה — ראו הערה למטה.</div>'; }
@@ -1133,6 +1368,7 @@ function openManual(from, preset) {
     const busy = new Set();
     appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === pick.date)
          .forEach(a => unitsOf(a).forEach(u => busy.add(u)));
+    blockedFor(day).forEach(u => busy.add(u));   // חסימות ממסך ההגדרות
 
     const openM  = w ? toMin(w.open)  : toMin('08:00');
     const closeM = w ? toMin(w.close) : toMin('20:00');
@@ -1197,6 +1433,7 @@ function openManual(from, preset) {
 window.HollandStaff = { CFG, TXT, state, statusOf, unitsOf, visible, render,
                         cardHtml, openManual, isoOf, hhmmOf, splitName,
                         odoroFields, copyAct, copyStep, wire, waLink, WA,
+                        windowFor, blockedFor, schedule, renderSettings,
                         setAppts: (x) => { appts = x; } };
 </script>
 </body>
