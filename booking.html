@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>קביעת תור — מרפאת ד"ר רונן הולנד</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!--
+═══════════════════════════════════════════════════════════════════════
+  מרפאת ד"ר רונן הולנד — אפליקציית קביעת תורים
+  שלבים 1-2: זרימת המטופל + Firestore ונעילת סלוטים
+
+  מבנה הקובץ:
+    1. TEXTS   — כל הטקסטים מול המטופל. לעריכה חופשית, לא נוגע בלוגיקה.
+    2. CONFIG  — שעות, משכים, מחירים, קודי שירות, Firebase, מזהי מדידה.
+    3. Lead    — לכידת מקור הליד ושחזור ייחוס.
+    4. Track   — dataLayer בלבד.
+    5. Cal     — חישוב זמינות וכלל "המשך אחרי כל תור".
+    6. Store   — דמו או Firestore, אותו ממשק.
+    7. מסכים   — ציור וניווט.
+
+  ⚠️ שני כללים מחייבים:
+     · לגוגל לא נשלחים שם, טלפון, ת"ז או שם הטיפול. רק service_code.
+     · פרטי מטופלים נכתבים ל-appointments ולעולם לא ל-day_slots,
+       שהוא האוסף היחיד שקריא בלי הזדהות. ראו firestore.rules.
+
+  כל עוד CONFIG.firebase.apiKey ריק — האפליקציה רצה על נתוני דמו
+  ולא נוגעת ברשת. ראו FIREBASE-SETUP.md.
+═══════════════════════════════════════════════════════════════════════
+-->
+
+<style>
+:root{
+  --navy:#2b3a5c;
+  --navy-dark:#22304c;
+  --sage:#7ba39b;
+  --sage-hover:#6d938b;
+  --mint:#dff0ec;
+  --grey:#d8d8d8;
+  --grey-text:#8b8b8b;
+  --line:#e4e4e4;
+  --text:#2f3542;
+  --muted:#6f7683;
+  --radius:10px;
+  --max:560px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:'Heebo',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  color:var(--text);background:#fff;font-size:17px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--max);margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+
+/* ── כותרת עליונה ── */
+.hdr{background:var(--navy);color:#fff;padding:26px 22px 24px;text-align:right}
+.hdr h1{margin:0;font-size:21px;font-weight:700;line-height:1.35}
+.hdr .sub{margin-top:7px;font-size:15px;opacity:.85;font-weight:400}
+.hdr .sub div{margin-top:2px}
+
+/* ── גוף ── */
+.body{flex:1;padding:26px 22px 34px}
+h2{font-size:20px;font-weight:700;color:var(--navy);margin:0 0 6px}
+.rule{height:1px;background:var(--line);margin:16px 0 22px}
+.lead{color:var(--muted);font-size:15px;margin:0 0 18px}
+.section-label{font-size:17px;font-weight:700;color:var(--navy);margin:26px 0 12px}
+.section-label:first-child{margin-top:0}
+
+/* ── כפתורים ── */
+.btn{
+  display:block;width:100%;border:none;border-radius:var(--radius);
+  font-family:inherit;font-size:17px;font-weight:700;cursor:pointer;
+  padding:22px 18px;margin-bottom:14px;text-align:center;
+  transition:background .15s,transform .08s;
+}
+.btn:active{transform:scale(.985)}
+.btn-primary{background:var(--sage);color:#fff}
+.btn-primary:hover{background:var(--sage-hover)}
+.btn-navy{background:var(--navy);color:#fff}
+.btn-navy:hover{background:var(--navy-dark)}
+.btn-ghost{background:#fff;color:var(--navy);border:2px solid var(--navy);padding:16px}
+.btn-ghost:hover{background:#f6f8fb}
+.btn-back{background:#fff;color:var(--navy);border:2px solid var(--navy);padding:15px;font-weight:500;margin-top:6px}
+.btn-back:hover{background:#f6f8fb}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+
+.note-box{
+  border:2px solid var(--navy);border-radius:var(--radius);
+  padding:16px 18px;text-align:center;font-weight:700;color:var(--navy);
+  font-size:16px;line-height:1.45;
+}
+
+/* ── מסך מחיר ── */
+.detail-body{font-size:16px;color:var(--text);margin:0 0 20px;line-height:1.65}
+.detail-body p{margin:0 0 6px}
+.price-card{
+  background:var(--mint);border-radius:var(--radius);
+  padding:22px 18px;text-align:center;margin-bottom:14px;
+}
+.price-card .amount{font-size:20px;font-weight:700;color:var(--navy)}
+.price-card .amount-note{font-size:14px;color:var(--muted);margin-top:5px;font-weight:400}
+.disclaimer{font-size:14px;color:var(--muted);text-align:center;margin:0 0 26px;line-height:1.5}
+
+/* ── לוח שנה ── */
+.cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.cal-nav button{
+  background:#fff;border:1px solid var(--line);border-radius:8px;
+  width:40px;height:40px;font-size:19px;color:var(--navy);cursor:pointer;font-family:inherit;
+}
+.cal-nav button[disabled]{opacity:.3;cursor:not-allowed}
+.cal-nav .month{font-weight:700;font-size:17px;color:var(--navy)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.cal-dow{
+  text-align:center;font-size:13px;color:var(--muted);
+  padding:6px 0;font-weight:500;
+}
+.cal-day{
+  aspect-ratio:1;border:none;border-radius:8px;background:#f3f4f6;color:var(--grey-text);
+  font-family:inherit;font-size:15px;font-weight:500;cursor:default;
+  display:flex;align-items:center;justify-content:center;padding:0;
+}
+.cal-day.free{background:var(--sage);color:#fff;cursor:pointer;font-weight:700}
+.cal-day.free:hover{background:var(--sage-hover)}
+.cal-day.sel{background:var(--navy);color:#fff;font-weight:700}
+.cal-day.blank{background:transparent}
+
+.slots-title{font-weight:700;font-size:17px;color:var(--navy);margin:26px 0 12px}
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:10px}
+.slot{
+  border:none;border-radius:8px;background:var(--sage);color:#fff;
+  font-family:inherit;font-size:17px;font-weight:500;padding:16px 4px;cursor:pointer;
+}
+.slot:hover{background:var(--sage-hover)}
+.slot.taken{background:var(--grey);color:var(--grey-text);cursor:not-allowed}
+.slot.sel{background:var(--navy);color:#fff;font-weight:700}
+.empty-day{color:var(--muted);font-size:15px;padding:8px 0}
+
+/* ── טופס ── */
+label.fld{display:block;margin-bottom:20px}
+.name-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:400px){.name-row{grid-template-columns:1fr;gap:0}}
+label.fld .lbl{font-weight:700;font-size:17px;color:var(--navy);display:block;margin-bottom:4px}
+label.fld .hint{font-size:13px;color:var(--muted);display:block;margin-bottom:8px;font-weight:400}
+input,textarea{
+  width:100%;font-family:inherit;font-size:17px;color:var(--text);
+  border:1px solid var(--line);border-radius:var(--radius);
+  padding:15px 14px;background:#fff;
+}
+input:focus,textarea:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(123,163,155,.18)}
+textarea{min-height:110px;resize:vertical}
+input.err,textarea.err{border-color:#c0392b}
+.err-msg{color:#c0392b;font-size:14px;margin-top:5px;display:none}
+.err-msg.on{display:block}
+.privacy{font-size:14px;color:var(--muted);line-height:1.55;margin:0 0 22px}
+
+/* ── אישור ── */
+.ok-circle{
+  width:82px;height:82px;border-radius:50%;background:var(--sage);
+  color:#fff;font-size:40px;display:flex;align-items:center;justify-content:center;
+  margin:14px auto 22px;
+}
+.ok-title{text-align:center;font-size:20px;font-weight:700;color:var(--navy);margin:0 0 10px}
+.ok-lead{text-align:center;color:var(--muted);font-size:16px;margin:0 0 24px;line-height:1.55}
+.summary{background:var(--mint);border-radius:var(--radius);padding:22px 20px;text-align:right}
+.summary div{font-weight:700;color:var(--navy);font-size:17px;margin-bottom:7px}
+.summary div:last-child{margin-bottom:0}
+.clinic-foot{text-align:center;color:var(--muted);font-size:14px;margin-top:22px;line-height:1.5}
+
+/* ── שונות ── */
+.screen{display:none}
+.screen.on{display:block;animation:fade .18s ease-out}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+#debug{
+  position:fixed;bottom:0;right:0;left:0;background:#111;color:#0f0;
+  font:12px/1.5 monospace;padding:10px 14px;direction:ltr;text-align:left;
+  max-height:38vh;overflow:auto;z-index:99;display:none;
+}
+#debug.on{display:block}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="hdr">
+    <h1 id="hdrTitle"></h1>
+    <div class="sub" id="hdrSub"></div>
+  </div>
+  <div class="body" id="body"></div>
+</div>
+
+<div id="debug"></div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════
+   1. TEXTS — כל הטקסטים מול המטופל
+   רוני: זה הבלוק לעריכה. אפשר לשנות כל מחרוזת כאן בלי לגעת בשאר.
+   ══════════════════════════════════════════════════════════════════ */
+const TEXTS = {
+
+  clinic: {
+    title:    'קביעת תור למרפאה הפרטית של ד"ר רונן הולנד',
+    subtitle: 'מומחה בכירורגיה אורולוגית ובריאות הגבר',
+    address:  'בורוכוב 54, גבעתיים',
+    footName: 'מרפאת מומחים',
+    footAddr: 'בורוכוב 54, גבעתיים',
+    whatsapp: '972522270070',        // בפורמט בינלאומי, בלי + ובלי מקפים
+    phoneDisplay: '052-227-0070'
+  },
+
+  /* ── מסך 1: סוג התור ── */
+  s1: {
+    heading:      'סוג התור המבוקש',
+    newVisit:     'ביקור חדש',
+    followUp:     'ביקורת',
+    prescription: 'חידוש מרשם',
+    contactLabel: 'דרכים נוספות ליצירת קשר',
+    waText:       'הודעת ווטסאפ למרפאה',
+    waVoice:      'הודעה קולית בווטסאפ',
+    maccabi:      'לקביעת תור דרך מכבי יש להשתמש באפליקציית מכבי'
+  },
+
+  /* ── מסך 2א: נושא הייעוץ (ביקור חדש) ── */
+  s2a: { heading: 'נושא הייעוץ' },
+
+  /* ── מסך 2ב: אופן הביקור (ביקורת / חידוש מרשם) ── */
+  s2b: {
+    heading:  'בחירת סוג הביקור',
+    frontal:  'פרונטלי',
+    phone:    'טלפוני',
+    note:     'התשלום לביקורת / חידוש מרשם ייקבע ע"י צוות המרפאה לפי סוג הביקור ומועד הביקור האחרון.'
+  },
+
+  /* ── מסך 3: פרטי הביקור והמחיר ── */
+  s3: {
+    heading:      'פרטי הביקור',
+    includesLbl:  'הביקור כולל',
+    disclaimer:   '* כדי לשריין את התור, תתבקש לשלם מקדמה (אשראי או BIT) *',
+    cta:          'המשך לבחירת תאריך ושעה'
+  },
+
+  /* ── מסך 4: לוח שנה ושעות ── */
+  s4: {
+    heading:    'בחירת תאריך ושעה',
+    pickDay:    'בחרו יום מהלוח כדי לראות שעות פנויות',
+    slotsFor:   'תורים זמינים ליום',      // + "שני 13.7"
+    noSlots:    'אין שעות פנויות ביום זה. אנא בחרו יום אחר.',
+    cta:        'המשך למילוי פרטים',
+    slotGone:   'מצטערים, השעה הזו נתפסה כרגע על ידי מטופל אחר. הלוח עודכן — אנא בחרו שעה אחרת.'
+  },
+
+  /* ── מסך 5: פרטים אישיים ── */
+  s5: {
+    heading:     'פרטים אישיים',
+    firstLbl:    'שם פרטי',
+    lastLbl:     'שם משפחה',
+    phoneLbl:    'מספר טלפון נייד',
+    phoneHint:   '- מספר הנייד חייב להיות של המטופל',
+    idLbl:       'מספר זהות (לא חובה, אך רצוי)',
+    noteLbl:     'הערה (לא חובה)',
+    privacy:     'הפרטים האישיים ותוכן הייעוץ אינם מועברים לקופת החולים או לגורם אחר. כל הנתונים מוגנים בחיסיון רופא-מטופל.',
+    cta:         'שריינו לי את התור',
+    errFirst:    'נא למלא שם פרטי',
+    errLast:     'נא למלא שם משפחה',
+    errPhone:    'נא למלא מספר נייד תקין (10 ספרות, מתחיל ב-05)',
+    errId:       'מספר זהות צריך להיות בן 9 ספרות',
+    errSave:     'לא הצלחנו לשמור את התור כרגע. אנא נסו שוב, או פנו אלינו בווטסאפ 052-227-0070.'
+  },
+
+  /* ── מסך 6: אישור ── */
+  s6: {
+    hdrTitle: 'התור נקלט',
+    title:    'מועד התור נקלט בהצלחה',
+    lead:     'צוות המרפאה ישלח לך בהקדם פרטים נוספים וקישור לתשלום המקדמה.',
+    dateLbl:  'תאריך:',
+    timeLbl:  'שעה:',
+    topicLbl: 'נושא:'
+  },
+
+  back: '← חזרה',
+
+  /* ── שמות הימים והחודשים ── */
+  dowShort:  ['א','ב','ג','ד','ה','ו','ש'],
+  dowLong:   ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'],
+  months:    ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר']
+};
+
+
+/* ══════════════════════════════════════════════════════════════════
+   2. CONFIG — הגדרות תפעוליות
+   ══════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+
+  /* שעות פעילות קבועות. 0=ראשון … 6=שבת. null = סגור לקביעה עצמאית.
+     יום רביעי סגור (רוני במכבי 15:00-19:20; תור דחוף — הזנה ידנית בלבד). */
+  hours: {
+    0: { open: '09:30', close: '13:00' },
+    1: { open: '09:00', close: '14:00' },
+    2: { open: '08:30', close: '12:30' },
+    3: null,
+    4: { open: '09:00', close: '14:00' },
+    5: null,
+    6: null
+  },
+
+  /* חריגים לפי תאריך ספציפי (דורס את הלוז הקבוע).
+     בשלב 2 זה יגיע מאוסף overrides ב-Firestore.
+     דוגמאות:
+       '2026-09-22': { closed: true }                          // יום סגור
+       '2026-09-25': { open: '09:00', close: '12:00' }         // יום פתוח חריג (גם אם ברירת המחדל סגורה)
+  */
+  overrides: {},
+
+  /* ── רשת השעות (הוחלט) ──────────────────────────────────────────────
+     נעילה: יחידות של 10 דקות. תור של 30 תופס שלוש יחידות, כך שביקורת
+     בת 20 לא תוכל להידחף לתוכו.
+
+     הצגה: "המשך אחרי כל תור" — מציעים את שעת פתיחת היום, ואחריה רק את
+     רגע הסיום של כל תור קיים. יום ריק ייראה 09:30 / 10:00 / 10:30 …
+     אבל אם נקבעה ביקורת של 20 דקות ב-09:30, ההצעה הבאה תהיה 09:50
+     ולא 10:00 — בלי זמן מבוזבז ובלי חורים שאי אפשר למלא.
+     ⚠️ הכלל הזה דורש נתוני תורים אמיתיים ולכן מיושם בשלב 2. עד אז
+        הפריסה היא לפי משך הביקור, שזה בדיוק אותה תוצאה ביום ריק. */
+  baseGridMin:  10,
+  minLeadHours: 2,    // לא מציעים תור בפחות מכך מרגע זה
+  horizonDays:  60,   // עד כמה קדימה אפשר לקבוע
+
+  /* ── התראות מייל (שלב 5) ────────────────────────────────────────
+     הכתובות אינן כאן במכוון. הקובץ הזה מוגש לכל מטופל ולכל סורק
+     ברשת, וכתובת מייל בקוד גלוי היא הזמנה לספאם — במיוחד כשאלה
+     בדיוק שתי הכתובות שמזוהות מול Firebase.
+     הן מוגדרות ב-Cloud Function, בצד השרת. ראו FIREBASE-SETUP.md. */
+
+  /* סוגי ביקור. משכים מאושרים:
+     ביקור חדש 30' · ביקורת פרונטלי 20' · ביקורת טלפוני 10' · חידוש מרשם 10' */
+  services: {
+    ED:  { code:'A', durationMin:30, track:'new',
+           hdrSub:  'ביקור חדש – שיפור התפקוד המיני',
+           btn:     'שיפור התפקוד המיני',
+           topic:   'שיפור התפקוד המיני',
+           includes:['בירור מקיף של ההפרעה של התפקוד המיני, אולטרסאונד של הפין (לפי הצורך), התאמת הטיפול, ליווי למשך חצי שנה'],
+           priceLbl:'מחיר הייעוץ- 2,000 ₪', priceNote:'' },
+
+    STD: { code:'B', durationMin:30, track:'new',
+           hdrSub:  'ביקור חדש – מחלות מין (STD)',
+           btn:     'אבחון מהיר וטיפול מיידי במחלות מין',
+           topic:   'אבחון מהיר וטיפול מיידי במחלות מין',
+           includes:['אבחון מהיר בעזרת בדיקות דם ושתן, טיפול אנטיביוטי מיידי לפי התוצאות ובקורת לפי הצורך.'],
+           priceLbl:'מחיר הייעוץ- 1,800 ₪', priceNote:'' },
+
+    CON: { code:'C', durationMin:30, track:'new',
+           hdrSub:  'ביקור חדש – קונדילומה',
+           btn:     'טיפול בקונדילומה של הגבר',
+           topic:   'טיפול בקונדילומה של הגבר',
+           includes:['אבחון של הנגעים.',
+                     'צריבה יסודית של הנגעים ופיקוח ביקורת לפי הצורך למשך חצי שנה.',
+                     'סיוע במתן חיסון נגד פפילומה.'],
+           priceLbl:'מחיר הטיפול- 3,000-5,000 ₪', priceNote:'לפי כמות ופיזור הנגעים' },
+
+    URO: { code:'D', durationMin:30, track:'new',
+           hdrSub:  'ביקור חדש – ייעוץ אורולוגי כללי',
+           btn:     'ייעוץ מומחה בנושאים אורולוגיים',
+           topic:   'ייעוץ מומחה בנושאים אורולוגיים',
+           includes:['בירור מקיף של ההפרעה האורולוגית, בדיקת שתן מהירה, אולטרסאונד (לפי הצורך), התאמת הטיפול, ליווי למשך חצי שנה'],
+           priceLbl:'מחיר הייעוץ- 2,000 ₪', priceNote:'' },
+
+    /* ביקורת וחידוש מרשם — ללא מסך מחיר; המחיר נקבע ע"י הצוות. */
+    REV_F: { code:'R', durationMin:20, track:'follow', topic:'ביקורת — פרונטלי' },
+    REV_P: { code:'R', durationMin:10, track:'follow', topic:'ביקורת — טלפוני' },
+    RX_F:  { code:'P', durationMin:10, track:'follow', topic:'חידוש מרשם — פרונטלי' },
+    RX_P:  { code:'P', durationMin:10, track:'follow', topic:'חידוש מרשם — טלפוני' }
+  },
+
+  /* סדר הצגת תחומי הטיפול במסך 2א */
+  newVisitOrder: ['ED','STD','CON','URO'],
+
+  /* ערך ההמרה שנשלח לגוגל. שתי רמות בלבד — במכוון.
+     ערך מדויק לכל תחום היה חושף את סוג הטיפול דרך הסכום. */
+  conversionValue: { new: 2000, follow: 600 },
+  currency: 'ILS',
+
+  /* מזהי מדידה — לתיעוד. התגים עצמם מוגדרים בקונטיינר GTM-TW674CWJ. */
+  measurement: {
+    gtm:      'GTM-TW674CWJ',
+    ga4:      'G-Y0JJDTQS0C',
+    adsId:    'AW-10823637231',
+    adsLabel: '9LhACMatuIsDEO-xjqko'
+  },
+
+  /* ── Firebase ──────────────────────────────────────────────────────
+     להעתיק לכאן את האובייקט מ-Firebase Console ← Project settings ←
+     Your apps ← Web app. ראו FIREBASE-SETUP.md.
+     כל עוד apiKey ריק — האפליקציה רצה על נתוני דמו ולא נוגעת ברשת,
+     כך שאפשר להראות אותה לעתליה בלי שום הקמה. */
+  firebase: {
+    apiKey:            'AIzaSyCCjGaou3W0izd_Y2MYLmJ-8flPTM3F-Lk',
+    authDomain:        'holland-booking.firebaseapp.com',
+    projectId:         'holland-booking',
+    storageBucket:     'holland-booking.firebasestorage.app',
+    messagingSenderId: '215347674704',
+    appId:             '1:215347674704:web:cc8b50f93c34c8d6859b55'
+  },
+
+  holdMinutes: 15   // כמה זמן סלוט שמור למטופל בזמן מילוי הטופס
+};
+
+/* דמו = אין הגדרות Firebase */
+CONFIG.demoMode = !CONFIG.firebase.apiKey;
+
+
+/* ══════════════════════════════════════════════════════════════════
+   3. לכידת מקור הליד
+   ══════════════════════════════════════════════════════════════════ */
+const Lead = (() => {
+  const KEY       = 'holland_lead_v1';        // הסשן הנוכחי
+  const FIRST_KEY = 'holland_first_touch_v1'; // המגע הראשון, נשמר לאורך זמן
+  const TTL_DAYS  = 90;                       // חלון ההמרות של גוגל
+
+  /* ── למה יש כאן שתי שכבות ──────────────────────────────────────────
+     תרחיש אמיתי לפי נוהל העבודה במרפאה:
+       1. המטופל לוחץ על מודעה  → נוחת ב-/std/ עם gclid
+       2. פותח את האפליקציה, מתלבט, לא קובע
+       3. שולח וואטסאפ עם שאלות
+       4. הצוות שולח לו קישור: booking...?src=whatsapp
+       5. הוא קובע תור עצמאית
+     בלי שכבת "מגע ראשון", שלב 5 היה נרשם כ"ווטסאפ" — והמודעה
+     ששילמנו עליה לא הייתה מקבלת קרדיט על מטופל שהיא הביאה.
+     לכן: gclid שנלכד פעם אחת נשמר 90 יום, ונשלף בכניסה חוזרת.
+     ערוץ החזרה נשמר בנפרד ב-reentry_src — לא מוחקים מידע, מוסיפים.
+     ─────────────────────────────────────────────────────────────── */
+
+  function capture() {
+    // בתוך אותו סשן — לא מחשבים מחדש, כדי שהערך ישרוד מעבר בין מסכים ורענון.
+    const saved = read();
+    if (saved && saved.captured_at) return saved;
+
+    const q = new URLSearchParams(location.search);
+    const g = (k) => q.get(k) || null;
+
+    const url = {
+      gclid: g('gclid') || g('wbraid') || g('gbraid'),
+      utm: {
+        source:   g('utm_source'),
+        medium:   g('utm_medium'),
+        campaign: g('utm_campaign'),
+        term:     g('utm_term'),
+        content:  g('utm_content')
+      },
+      src: g('src')
+    };
+
+    const hasPaid = !!(url.gclid || url.utm.source);
+    const first   = readFirst();
+
+    const data = {
+      captured_at: new Date().toISOString(),
+      gclid:    url.gclid,
+      utm:      url.utm,
+      src:      url.src,
+      referrer: document.referrer || null,
+      device:   matchMedia('(max-width:768px)').matches ? 'mobile' : 'desktop',
+      landing:  location.pathname + location.search,
+      first_touch_at: null,
+      reentry_src: null,
+      attribution_recovered: false
+    };
+
+    if (hasPaid) {
+      // מגע חדש עם מקור מזוהה — הוא גובר, ונשמר גם לעתיד.
+      data.first_touch_at = data.captured_at;
+      writeFirst({ at: data.captured_at, gclid: url.gclid, utm: url.utm });
+    } else if (first) {
+      // אין פרמטרים בכתובת, אבל יש מגע קודם בתוקף — משחזרים אותו.
+      data.gclid = first.gclid;
+      data.utm   = first.utm || data.utm;
+      data.first_touch_at = first.at;
+      data.attribution_recovered = true;
+      data.reentry_src = url.src || (document.referrer ? 'referral' : 'direct');
+    }
+
+    data.lead_source = classify(data);
+    write(data);
+    return data;
+  }
+
+  /* היררכיית זיהוי, לפי מסמך מעקב הלידים:
+     1. gclid → גוגל אדס   2. utm → לפי ההגדרה
+     3. src=whatsapp → ווטסאפ   4. referrer מהאתר → אורגני   5. אחרת → ישיר */
+  function classify(d) {
+    if (d.gclid) return 'google_ads';
+    if (d.src && d.src.toLowerCase() === 'whatsapp') return 'whatsapp';
+    if (d.utm.source) {
+      const s = d.utm.source.toLowerCase();
+      const m = (d.utm.medium || '').toLowerCase();
+      if (s === 'google' && (m === 'cpc' || m === 'ppc' || m === 'paid')) return 'google_ads';
+      if (s.includes('whatsapp')) return 'whatsapp';
+      return 'other_campaign';
+    }
+    if (d.referrer) {
+      try {
+        const h = new URL(d.referrer).hostname.replace(/^www\./,'');
+        if (h.endsWith('dr-holland.co.il')) return 'organic';
+        if (h.includes('google.'))  return 'organic';
+        if (h.includes('whatsapp')) return 'whatsapp';
+        return 'referral';
+      } catch(e){ return 'referral'; }
+    }
+    return 'direct';
+  }
+
+  function read(){ try { return JSON.parse(sessionStorage.getItem(KEY) || 'null'); } catch(e){ return null; } }
+  function write(d){ try { sessionStorage.setItem(KEY, JSON.stringify(d)); } catch(e){} }
+
+  /* המגע הראשון — localStorage, פג אחרי 90 יום */
+  function readFirst(){
+    try {
+      const f = JSON.parse(localStorage.getItem(FIRST_KEY) || 'null');
+      if (!f || !f.at) return null;
+      if (Date.now() - new Date(f.at).getTime() > TTL_DAYS * 864e5) {
+        localStorage.removeItem(FIRST_KEY); return null;
+      }
+      return (f.gclid || (f.utm && f.utm.source)) ? f : null;
+    } catch(e){ return null; }
+  }
+  function writeFirst(f){ try { localStorage.setItem(FIRST_KEY, JSON.stringify(f)); } catch(e){} }
+
+  return { capture, read };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   4. מדידה — dataLayer בלבד
+   האפליקציה לא יורה תגים. היא דוחפת אירועים, וקונטיינר GTM מחליט.
+   ⚠️ אסור לשלוח כאן שם, טלפון, ת"ז או שם טיפול. רק service_code.
+   ══════════════════════════════════════════════════════════════════ */
+const Track = (() => {
+  window.dataLayer = window.dataLayer || [];
+  const fired = new Set();
+  const SENT_KEY = 'holland_conv_sent_v1';
+
+  function push(event, extra) {
+    const lead = Lead.read() || {};
+    const payload = Object.assign({
+      event,
+      lead_source: lead.lead_source || 'direct',
+      device:      lead.device || 'desktop'
+    }, extra || {});
+    window.dataLayer.push(payload);
+    Debug.log('→ ' + event, payload);
+  }
+
+  /* אירוע משפך — פעם אחת לכל סשן */
+  function step(event, extra) {
+    if (fired.has(event)) return;
+    fired.add(event);
+    push(event, extra);
+  }
+
+  /* אירוע משפך שיכול לחזור עם ערך שונה (למשל בחירת סוג אחר) */
+  function stepRepeat(event, extra){ push(event, extra); }
+
+  /* ההמרה הראשית — פעם אחת לכל פנייה, גם אחרי רענון או "אחורה" */
+  function conversion(txId, svc) {
+    let sent = [];
+    try { sent = JSON.parse(sessionStorage.getItem(SENT_KEY) || '[]'); } catch(e){}
+    if (sent.includes(txId)) { Debug.log('✗ conversion suppressed (duplicate)', txId); return; }
+
+    push('appointment_requested', {
+      transaction_id: txId,
+      service_code:   svc.code,
+      visit_track:    svc.track,
+      value:          CONFIG.conversionValue[svc.track],
+      currency:       CONFIG.currency
+    });
+
+    sent.push(txId);
+    try { sessionStorage.setItem(SENT_KEY, JSON.stringify(sent)); } catch(e){}
+  }
+
+  return { step, stepRepeat, conversion };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   5. פאנל בדיקה — נפתח עם ?debug=1
+   ══════════════════════════════════════════════════════════════════ */
+const Debug = (() => {
+  const on = new URLSearchParams(location.search).get('debug') === '1';
+  const el = () => document.getElementById('debug');
+  const lines = [];
+  function log(label, data) {
+    if (!on) return;
+    lines.push(label + (data !== undefined ? '  ' + JSON.stringify(data) : ''));
+    const e = el(); if (!e) return;
+    e.classList.add('on');
+    e.textContent = lines.slice(-40).join('\n');
+    e.scrollTop = e.scrollHeight;
+  }
+  return { log, get on(){ return on; } };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   6. עזרי תאריך ולוח
+   ══════════════════════════════════════════════════════════════════ */
+const Cal = (() => {
+
+  const iso = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  const toMin = (hhmm) => { const [h,m] = hhmm.split(':').map(Number); return h*60+m; };
+  const toHHMM = (min) => String(Math.floor(min/60)).padStart(2,'0') + ':' + String(min%60).padStart(2,'0');
+  /* מפתח יחידת 10 דקות לשמירה ב-Firestore: '0930' ולא '09:30'.
+     שמות שדות במסמך Firestore עדיפים בלי תווים מיוחדים. */
+  const unitKey = (min) => String(Math.floor(min/60)).padStart(2,'0') + String(min%60).padStart(2,'0');
+
+  /* שעות הפעילות בפועל לתאריך: ברירת המחדל השבועית, ואז override אם קיים */
+  function windowFor(date) {
+    const ov = CONFIG.overrides[iso(date)];
+    if (ov) {
+      if (ov.closed) return null;
+      if (ov.open && ov.close) return { open: ov.open, close: ov.close };
+    }
+    return CONFIG.hours[date.getDay()] || null;
+  }
+
+  /* דמו: תפוסה דטרמיניסטית לפי hash — הלוח נראה אמין ולא משתנה ברענון */
+  function demoUnits(dateIso, w) {
+    const occupied = new Set();
+    for (let m = toMin(w.open); m < toMin(w.close); m += CONFIG.baseGridMin) {
+      let h = 0; const s = dateIso + toHHMM(m);
+      for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+      if ((h % 100) < 22) {
+        // תור דמו של 30 דקות — תופס שלוש יחידות, כמו במציאות
+        for (let k=0;k<3;k++) occupied.add(unitKey(m + k*CONFIG.baseGridMin));
+      }
+    }
+    return occupied;
+  }
+
+  /* ── כלל "המשך אחרי כל תור" ─────────────────────────────────────────
+     עוברים על היום ביחידות של 10 דקות. בכל נקודה פנויה בודקים אם יש
+     רצף פנוי באורך הביקור; אם כן — מציעים אותה וקופצים קדימה באורך
+     הביקור, כך שההצעה הבאה נופלת בדיוק על רגע הסיום. אם לא — מתקדמים
+     יחידה אחת ומנסים שוב.
+
+     התוצאה: יום ריק → 09:30, 10:00, 10:30 … ואילו אחרי ביקורת של 20
+     דקות ב-09:30, ההצעה הבאה תהיה 09:50 ולא 10:00. בלי זמן מבוזבז
+     ובלי חורים שאי אפשר למלא.
+     ─────────────────────────────────────────────────────────────── */
+  function slotsFor(date, durationMin, occupiedUnits) {
+    const w = windowFor(date);
+    if (!w) return [];
+
+    const step   = CONFIG.baseGridMin;
+    const needed = Math.ceil(durationMin / step);
+    const busy   = occupiedUnits || (CONFIG.demoMode ? demoUnits(iso(date), w) : new Set());
+    const limit  = Date.now() + CONFIG.minLeadHours * 3600 * 1000;
+    const closeM = toMin(w.close);
+    const out    = [];
+
+    for (let m = toMin(w.open); m + durationMin <= closeM; ) {
+      let fits = true;
+      for (let k = 0; k < needed; k++) {
+        if (busy.has(unitKey(m + k*step))) { fits = false; break; }
+      }
+      if (!fits) { m += step; continue; }
+
+      const when = new Date(date);
+      when.setHours(Math.floor(m/60), m%60, 0, 0);
+      if (when.getTime() >= limit) out.push({ time: toHHMM(m) });
+      m += durationMin;                 // ההצעה הבאה — ברגע שהתור הזה נגמר
+    }
+    return out;
+  }
+
+  /* היחידות שתור בשעה נתונה תופס — לנעילה ולבדיקת התנגשות */
+  function unitsFor(hhmm, durationMin) {
+    const start = toMin(hhmm), step = CONFIG.baseGridMin, u = [];
+    for (let m = start; m < start + durationMin; m += step) u.push(unitKey(m));
+    return u;
+  }
+
+  const hasFree = (date, dur, busy) => slotsFor(date, dur, busy).length > 0;
+
+  return { iso, windowFor, slotsFor, unitsFor, hasFree, demoUnits, toMin, toHHMM, unitKey };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   6ב. שכבת הנתונים
+   ממשק אחד, שני מימושים: דמו (בלי רשת) ו-Firestore.
+   כל שאר הקוד לא יודע באיזה מהם הוא משתמש.
+
+   ── מודל הנתונים ──────────────────────────────────────────────────
+   day_slots/{YYYY-MM-DD}   ← תפוסה בלבד. אין כאן שום פרט מזהה, ולכן
+                              מותר לקרוא אותו בלי הזדהות.
+                              { date, units: { '0930': {a, e}, … } }
+                              a = מזהה התור · e = פקיעת שמירה זמנית (או null)
+   appointments/{uuid}      ← פרטי המטופל. קריאה רק לצוות מזוהה.
+   ──────────────────────────────────────────────────────────────── */
+const Store = (() => {
+  let db = null, fs = null, ready = null;
+
+  async function init() {
+    if (CONFIG.demoMode) return null;
+    if (ready) return ready;
+    ready = (async () => {
+      const appMod = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+      fs = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+      db = fs.getFirestore(appMod.initializeApp(CONFIG.firebase));
+      Debug.log('firestore connected', CONFIG.firebase.projectId);
+      return db;
+    })();
+    return ready;
+  }
+
+  const expired = (e) => e && Date.now() > e;
+
+  /* היחידות התפוסות ביום — שמירות שפג תוקפן נחשבות פנויות.
+     אין צורך בתהליך ניקוי רקע; הפקיעה מחושבת בזמן קריאה. */
+  function unitsFromDoc(data) {
+    const busy = new Set();
+    if (!data || !data.units) return busy;
+    for (const [u, v] of Object.entries(data.units)) {
+      if (!expired(v && v.e)) busy.add(u);
+    }
+    return busy;
+  }
+
+  /* תפוסה לטווח תאריכים — שאילתה אחת לכל החודש שמוצג בלוח */
+  async function range(fromIso, toIso) {
+    const map = new Map();
+    if (CONFIG.demoMode) return map;                  // דמו מחשב לבד
+    await init();
+    const q = fs.query(fs.collection(db, 'day_slots'),
+                       fs.where('date', '>=', fromIso), fs.where('date', '<=', toIso));
+    (await fs.getDocs(q)).forEach(d => map.set(d.id, unitsFromDoc(d.data())));
+    return map;
+  }
+
+  async function day(dateIso) {
+    if (CONFIG.demoMode) return null;
+    await init();
+    const snap = await fs.getDoc(fs.doc(db, 'day_slots', dateIso));
+    return unitsFromDoc(snap.exists() ? snap.data() : null);
+  }
+
+  /* ── שמירה זמנית בזמן מילוי הטופס ──
+     נכתבת פעם אחת, במעבר למסך הפרטים — לא בכל לחיצה על שעה. */
+  async function hold(dateIso, units, holdId) {
+    if (CONFIG.demoMode) return { ok: true };
+    await init();
+    const exp = Date.now() + CONFIG.holdMinutes * 60000;
+    return write(dateIso, units, { a: holdId, e: exp }, holdId);
+  }
+
+  async function release(dateIso, units, holdId) {
+    if (CONFIG.demoMode || !units || !units.length) return;
+    try {
+      await init();
+      const ref = fs.doc(db, 'day_slots', dateIso);
+      await fs.runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return;
+        const u = Object.assign({}, snap.data().units || {});
+        let changed = false;
+        units.forEach(k => { if (u[k] && u[k].a === holdId) { delete u[k]; changed = true; } });
+        if (changed) tx.update(ref, { units: u });
+      });
+    } catch (e) { Debug.log('release failed (לא קריטי)', String(e)); }
+  }
+
+  /* ── ההזמנה עצמה ──
+     בדיקת פנויות + נעילת כל היחידות + כתיבת התור — הכל בטרנזקציה אחת.
+     זה מה שמונע שני מטופלים על אותו סלוט. */
+  async function book(dateIso, units, appointment, holdId) {
+    if (CONFIG.demoMode) return { ok: true };
+    await init();
+    const dayRef  = fs.doc(db, 'day_slots', dateIso);
+    const apptRef = fs.doc(db, 'appointments', appointment.id);
+
+    try {
+      await fs.runTransaction(db, async (tx) => {
+        const snap = await tx.get(dayRef);
+        const cur  = snap.exists() ? (snap.data().units || {}) : {};
+
+        for (const k of units) {
+          const v = cur[k];
+          // תפוס אם קיים, לא פג תוקף, ואינו השמירה שלנו עצמה
+          if (v && !expired(v.e) && v.a !== holdId) throw new Error('SLOT_TAKEN');
+        }
+        const next = Object.assign({}, cur);
+        units.forEach(k => { next[k] = { a: appointment.id, e: null }; });
+
+        tx.set(dayRef, { date: dateIso, units: next }, { merge: true });
+        tx.set(apptRef, appointment);
+      });
+      return { ok: true };
+    } catch (e) {
+      const taken = String(e).includes('SLOT_TAKEN');
+      Debug.log(taken ? '✗ הסלוט נתפס' : '✗ שגיאת כתיבה', String(e));
+      return { ok: false, taken };
+    }
+  }
+
+  async function write(dateIso, units, value, holdId) {
+    const ref = fs.doc(db, 'day_slots', dateIso);
+    try {
+      await fs.runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const cur  = snap.exists() ? (snap.data().units || {}) : {};
+        for (const k of units) {
+          const v = cur[k];
+          if (v && !expired(v.e) && v.a !== holdId) throw new Error('SLOT_TAKEN');
+        }
+        const next = Object.assign({}, cur);
+        units.forEach(k => { next[k] = value; });
+        tx.set(ref, { date: dateIso, units: next }, { merge: true });
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, taken: String(e).includes('SLOT_TAKEN') };
+    }
+  }
+
+  return { init, range, day, hold, release, book };
+})();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   7. מצב האפליקציה
+   ══════════════════════════════════════════════════════════════════ */
+const state = {
+  screen:      's1',
+  track:       null,   // 'new' | 'follow'
+  followKind:  null,   // 'REV' | 'RX'
+  serviceKey:  null,   // מפתח ב-CONFIG.services
+  calMonth:    null,   // Date — ראשון לחודש המוצג
+  selDate:     null,   // Date
+  selTime:     null,   // 'HH:MM'
+  form:        { first:'', last:'', phone:'', idnum:'', note:'' },
+  txId:        null,
+  busy:        new Map(),  // dateIso → Set של יחידות תפוסות
+  holdId:      null,       // מזהה השמירה הזמנית הפעילה
+  heldDate:    null,
+  heldUnits:   null
+};
+
+const svc = () => CONFIG.services[state.serviceKey] || null;
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random()*16|0; return (c==='x'?r:(r&0x3|0x8)).toString(16);
+    }));
+
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+
+/* ══════════════════════════════════════════════════════════════════
+   8. ציור המסכים
+   ══════════════════════════════════════════════════════════════════ */
+const T = TEXTS;
+const $body = () => document.getElementById('body');
+
+function setHeader(title, subLines) {
+  document.getElementById('hdrTitle').textContent = title;
+  document.getElementById('hdrSub').innerHTML = (subLines || []).map(l => '<div>'+esc(l)+'</div>').join('');
+}
+
+function go(screen) {
+  state.screen = screen;
+  render();
+  window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+}
+
+function render() {
+  const r = {
+    s1: drawVisitType,
+    s2a: drawTreatmentAreas,
+    s2b: drawFollowKind,
+    s3: drawDetails,
+    s4: drawCalendar,
+    s5: drawForm,
+    s6: drawConfirm
+  }[state.screen];
+  r();
+}
+
+/* ── מסך 1 ── */
+function drawVisitType() {
+  setHeader(T.clinic.title, [T.clinic.subtitle, T.clinic.address]);
+  const wa = 'https://wa.me/' + T.clinic.whatsapp;
+  $body().innerHTML = `
+    <div class="section-label">${esc(T.s1.heading)}</div>
+    <button class="btn btn-primary" data-go="new">${esc(T.s1.newVisit)}</button>
+    <button class="btn btn-primary" data-go="REV">${esc(T.s1.followUp)}</button>
+    <button class="btn btn-primary" data-go="RX">${esc(T.s1.prescription)}</button>
+    <div class="rule"></div>
+    <div class="section-label">${esc(T.s1.contactLabel)}</div>
+    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" style="text-decoration:none">${esc(T.s1.waText)}</a>
+    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" style="text-decoration:none">${esc(T.s1.waVoice)}</a>
+    <div class="note-box">${esc(T.s1.maccabi)}</div>
+  `;
+  $body().querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+    const v = b.dataset.go;
+    if (v === 'new') {
+      state.track = 'new'; state.followKind = null;
+      Track.stepRepeat('booking_type_selected', { visit_track: 'new' });
+      go('s2a');
+    } else {
+      state.track = 'follow'; state.followKind = v;
+      Track.stepRepeat('booking_type_selected', { visit_track: 'follow' });
+      go('s2b');
+    }
+  });
+}
+
+/* ── מסך 2א ── */
+function drawTreatmentAreas() {
+  setHeader(T.clinic.title, [T.clinic.subtitle, T.clinic.address]);
+  const btns = CONFIG.newVisitOrder.map(k =>
+    `<button class="btn btn-primary" data-k="${k}">${esc(CONFIG.services[k].btn)}</button>`).join('');
+  $body().innerHTML = `
+    <h2>${esc(T.s2a.heading)}</h2>
+    <div class="rule"></div>
+    ${btns}
+    <div class="rule"></div>
+    <button class="btn btn-back" data-back>${esc(T.back)}</button>
+  `;
+  $body().querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+    state.serviceKey = b.dataset.k;
+    go('s3');
+  });
+  $body().querySelector('[data-back]').onclick = () => go('s1');
+}
+
+/* ── מסך 2ב ── */
+function drawFollowKind() {
+  setHeader(T.clinic.title, [T.clinic.subtitle, T.clinic.address]);
+  $body().innerHTML = `
+    <h2>${esc(T.s2b.heading)}</h2>
+    <div class="rule"></div>
+    <button class="btn btn-primary" data-m="F">${esc(T.s2b.frontal)}</button>
+    <button class="btn btn-primary" data-m="P">${esc(T.s2b.phone)}</button>
+    <div class="rule"></div>
+    <p class="lead" style="text-align:center">${esc(T.s2b.note)}</p>
+    <button class="btn btn-back" data-back>${esc(T.back)}</button>
+  `;
+  $body().querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+    state.serviceKey = state.followKind + '_' + b.dataset.m;   // REV_F / REV_P / RX_F / RX_P
+    go('s4');                                                   // ביקורת ומרשם — בלי מסך מחיר
+  });
+  $body().querySelector('[data-back]').onclick = () => go('s1');
+}
+
+/* ── מסך 3 ── */
+function drawDetails() {
+  const s = svc();
+  setHeader(T.s3.heading, [s.hdrSub]);
+  Track.stepRepeat('price_viewed', { service_code: s.code, visit_track: s.track });
+  $body().innerHTML = `
+    <div class="section-label">${esc(T.s3.includesLbl)}</div>
+    <div class="detail-body">${s.includes.map(p => '<p>'+esc(p)+'</p>').join('')}</div>
+    <div class="price-card">
+      <div class="amount">${esc(s.priceLbl)}</div>
+      ${s.priceNote ? '<div class="amount-note">'+esc(s.priceNote)+'</div>' : ''}
+    </div>
+    <p class="disclaimer">${esc(T.s3.disclaimer)}</p>
+    <button class="btn btn-primary" data-next>${esc(T.s3.cta)}</button>
+    <button class="btn btn-back" data-back>${esc(T.back)}</button>
+  `;
+  $body().querySelector('[data-next]').onclick = () => go('s4');
+  $body().querySelector('[data-back]').onclick = () => go('s2a');
+}
+
+/* ── מסך 4 ── */
+function drawCalendar() {
+  const s = svc();
+  setHeader(T.s4.heading, [s.hdrSub || s.topic]);
+  Track.step('slots_viewed', { service_code: s.code, visit_track: s.track });
+
+  if (!state.calMonth) {
+    const n = new Date();
+    state.calMonth = new Date(n.getFullYear(), n.getMonth(), 1);
+  }
+  $body().innerHTML = `
+    <div id="cal"></div>
+    <div id="slotArea"></div>
+    <div style="margin-top:26px">
+      <button class="btn btn-primary" id="next4" disabled>${esc(T.s4.cta)}</button>
+      <button class="btn btn-back" data-back>${esc(T.back)}</button>
+    </div>
+  `;
+  $body().querySelector('[data-back]').onclick = () => go(state.track === 'new' ? 's3' : 's2b');
+  document.getElementById('next4').onclick = goToForm;
+  paintMonth();
+  paintSlots();
+  loadMonth();
+}
+
+/* טוענת את התפוסה לחודש המוצג ומציירת מחדש. נכשלת בשקט —
+   אם Firestore לא זמין, הלוח עדיין מוצג לפי שעות הפעילות. */
+async function loadMonth() {
+  if (CONFIG.demoMode) return;
+  const m = state.calMonth;
+  const from = Cal.iso(new Date(m.getFullYear(), m.getMonth(), 1));
+  const to   = Cal.iso(new Date(m.getFullYear(), m.getMonth()+1, 0));
+  try {
+    const map = await Store.range(from, to);
+    map.forEach((v, k) => state.busy.set(k, v));
+    if (state.screen === 's4') { paintMonth(); paintSlots(); }
+  } catch (e) { Debug.log('טעינת זמינות נכשלה', String(e)); }
+}
+
+/* מעבר למסך הפרטים — כאן נשמר הסלוט זמנית, פעם אחת */
+async function goToForm() {
+  const btn = document.getElementById('next4');
+  const s = svc();
+  const dIso  = Cal.iso(state.selDate);
+  const units = Cal.unitsFor(state.selTime, s.durationMin);
+
+  if (CONFIG.demoMode) { go('s5'); return; }
+
+  btn.disabled = true;
+  const prevLabel = btn.textContent;
+  btn.textContent = 'בודק זמינות…';
+
+  // משחררים שמירה קודמת אם המטופל שינה דעה
+  if (state.holdId && state.heldUnits) await Store.release(state.heldDate, state.heldUnits, state.holdId);
+
+  state.holdId = uuid();
+  const res = await Store.hold(dIso, units, state.holdId);
+  btn.textContent = prevLabel;
+
+  if (!res.ok) {
+    state.holdId = null;
+    btn.disabled = false;
+    state.busy.set(dIso, await Store.day(dIso) || new Set());
+    state.selTime = null;
+    paintMonth(); paintSlots();
+    alert(TEXTS.s4.slotGone);
+    return;
+  }
+  state.heldDate = dIso; state.heldUnits = units;
+  go('s5');
+}
+
+function paintMonth() {
+  const s = svc(), dur = s.durationMin;
+  const m = state.calMonth;
+  const first = new Date(m.getFullYear(), m.getMonth(), 1);
+  const days  = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const maxD  = new Date(today.getTime() + CONFIG.horizonDays*864e5);
+  const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const prevOk = first > thisMonth;
+  const nextOk = new Date(m.getFullYear(), m.getMonth()+1, 1) <= maxD;
+
+  let cells = '';
+  for (let i = 0; i < first.getDay(); i++) cells += '<div class="cal-day blank"></div>';
+  for (let d = 1; d <= days; d++) {
+    const date = new Date(m.getFullYear(), m.getMonth(), d);
+    const inRange = date >= today && date <= maxD;
+    const free = inRange && Cal.hasFree(date, dur, state.busy.get(Cal.iso(date)));
+    const sel  = state.selDate && Cal.iso(state.selDate) === Cal.iso(date);
+    cells += `<button class="cal-day ${free?'free':''} ${sel?'sel':''}" ${free?'':'disabled'} data-d="${d}">${d}</button>`;
+  }
+
+  document.getElementById('cal').innerHTML = `
+    <div class="cal-nav">
+      <button id="cPrev" ${prevOk?'':'disabled'}>›</button>
+      <div class="month">${esc(T.months[m.getMonth()])} ${m.getFullYear()}</div>
+      <button id="cNext" ${nextOk?'':'disabled'}>‹</button>
+    </div>
+    <div class="cal-grid">
+      ${T.dowShort.map(d => '<div class="cal-dow">'+esc(d)+'</div>').join('')}
+      ${cells}
+    </div>
+  `;
+  const pv = document.getElementById('cPrev'), nx = document.getElementById('cNext');
+  if (prevOk) pv.onclick = () => { state.calMonth = new Date(m.getFullYear(), m.getMonth()-1, 1); paintMonth(); loadMonth(); };
+  if (nextOk) nx.onclick = () => { state.calMonth = new Date(m.getFullYear(), m.getMonth()+1, 1); paintMonth(); loadMonth(); };
+
+  document.getElementById('cal').querySelectorAll('[data-d]:not([disabled])').forEach(b => b.onclick = () => {
+    state.selDate = new Date(m.getFullYear(), m.getMonth(), +b.dataset.d);
+    state.selTime = null;
+    paintMonth(); paintSlots();
+  });
+}
+
+function paintSlots() {
+  const area = document.getElementById('slotArea');
+  const nextBtn = document.getElementById('next4');
+  if (!state.selDate) {
+    area.innerHTML = `<p class="lead" style="margin-top:22px">${esc(T.s4.pickDay)}</p>`;
+    nextBtn.disabled = true;
+    return;
+  }
+  const s = svc();
+  const list = Cal.slotsFor(state.selDate, s.durationMin, state.busy.get(Cal.iso(state.selDate)));
+  const d = state.selDate;
+  const label = T.dowLong[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
+
+  if (!list.length) {
+    area.innerHTML = `<div class="slots-title">${esc(T.s4.slotsFor)} ${esc(label)}</div>
+                      <p class="empty-day">${esc(T.s4.noSlots)}</p>`;
+    nextBtn.disabled = true;
+    return;
+  }
+
+  area.innerHTML = `
+    <div class="slots-title">${esc(T.s4.slotsFor)} ${esc(label)}</div>
+    <div class="slots">
+      ${list.map(x => `<button class="slot ${state.selTime===x.time?'sel':''}"
+          data-t="${x.time}">${x.time}</button>`).join('')}
+    </div>
+  `;
+  area.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+    state.selTime = b.dataset.t;
+    Track.stepRepeat('slot_selected', { service_code: s.code, visit_track: s.track });
+    paintSlots();
+  });
+  nextBtn.disabled = !state.selTime;
+}
+
+/* ── מסך 5 ── */
+function drawForm() {
+  const d = state.selDate;
+  const label = T.dowLong[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1) + ' – שעה ' + state.selTime;
+  setHeader(T.s5.heading, [label]);
+  const f = state.form;
+  $body().innerHTML = `
+    <div class="name-row">
+      <label class="fld"><span class="lbl">${esc(T.s5.firstLbl)}</span>
+        <input id="fFirst" type="text" autocomplete="given-name" value="${esc(f.first)}">
+        <span class="err-msg" id="eFirst">${esc(T.s5.errFirst)}</span></label>
+
+      <label class="fld"><span class="lbl">${esc(T.s5.lastLbl)}</span>
+        <input id="fLast" type="text" autocomplete="family-name" value="${esc(f.last)}">
+        <span class="err-msg" id="eLast">${esc(T.s5.errLast)}</span></label>
+    </div>
+
+    <label class="fld"><span class="lbl">${esc(T.s5.phoneLbl)}</span>
+      <span class="hint">${esc(T.s5.phoneHint)}</span>
+      <input id="fPhone" type="tel" inputmode="numeric" autocomplete="tel" value="${esc(f.phone)}">
+      <span class="err-msg" id="ePhone">${esc(T.s5.errPhone)}</span></label>
+
+    <label class="fld"><span class="lbl">${esc(T.s5.idLbl)}</span>
+      <input id="fId" type="text" inputmode="numeric" maxlength="9" value="${esc(f.idnum)}">
+      <span class="err-msg" id="eId">${esc(T.s5.errId)}</span></label>
+
+    <label class="fld"><span class="lbl">${esc(T.s5.noteLbl)}</span>
+      <textarea id="fNote">${esc(f.note)}</textarea></label>
+
+    <p class="privacy">${esc(T.s5.privacy)}</p>
+    <button class="btn btn-primary" id="submitBtn">${esc(T.s5.cta)}</button>
+    <button class="btn btn-back" data-back>${esc(T.back)}</button>
+  `;
+  $body().querySelector('[data-back]').onclick = () => go('s4');
+  document.getElementById('submitBtn').onclick = submit;
+}
+
+function submit() {
+  const g = (id) => document.getElementById(id);
+  const first = g('fFirst').value.trim();
+  const last  = g('fLast').value.trim();
+  const phone = g('fPhone').value.replace(/\D/g,'');
+  const idnum = g('fId').value.replace(/\D/g,'');
+  const note  = g('fNote').value.trim();
+
+  const bad = [];
+  const mark = (fid, eid, isBad) => {
+    g(fid).classList.toggle('err', isBad);
+    g(eid).classList.toggle('on', isBad);
+    if (isBad) bad.push(fid);
+  };
+  mark('fFirst','eFirst', first.length < 2);
+  mark('fLast','eLast',  last.length  < 2);
+  mark('fPhone','ePhone', !/^05\d{8}$/.test(phone));
+  // ת"ז אופציונלית. 8 ספרות מנורמלות ל-9 עם אפס מוביל — אותו כלל כמו במערכת הקיימת.
+  mark('fId','eId', idnum.length > 0 && (idnum.length < 8 || idnum.length > 9));
+
+  if (bad.length) { g(bad[0]).focus(); return; }
+
+  state.form = { first, last, phone, idnum: idnum ? idnum.padStart(9,'0') : '', note };
+  state.txId = state.txId || uuid();
+
+  const s = svc();
+  const btn = g('submitBtn');
+
+  if (CONFIG.demoMode) {
+    Track.conversion(state.txId, s);
+    Debug.log('דמו — לא נכתב ל-Firestore', buildAppointment());
+    go('s6');
+    return;
+  }
+
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'שומר…';
+
+  const dIso  = Cal.iso(state.selDate);
+  const units = Cal.unitsFor(state.selTime, s.durationMin);
+
+  Store.book(dIso, units, buildAppointment(), state.holdId).then(res => {
+    if (res.ok) {
+      // ההמרה נורית רק אחרי שהתור באמת נכתב — לא על כוונה בלבד.
+      Track.conversion(state.txId, s);
+      state.holdId = null; state.heldUnits = null;
+      go('s6');
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = label;
+    if (res.taken) {
+      Store.day(dIso).then(b => {
+        state.busy.set(dIso, b || new Set());
+        state.selTime = null; state.holdId = null; state.heldUnits = null;
+        alert(TEXTS.s4.slotGone);
+        go('s4');
+      });
+    } else {
+      alert(TEXTS.s5.errSave);
+    }
+  });
+}
+
+/* רשומת התור כפי שתיכתב ל-Firestore בשלב 2 (נספח א' במסמך מעקב הלידים) */
+function buildAppointment() {
+  const s = svc(), lead = Lead.read() || {};
+  const start = new Date(state.selDate);
+  const [h,m] = state.selTime.split(':').map(Number);
+  start.setHours(h, m, 0, 0);
+  return {
+    id: state.txId,
+    /* ⚠️ אובייקט Date ולא מחרוזת. ה-SDK ממיר אותו אוטומטית ל-Timestamp
+       של Firestore. זה חייב להיות זהה לפורמט שכותב staff.html — אחרת
+       שאילתות טווח על השדה הזה לא רואות את המסמך. */
+    created_at: new Date(),
+    slot_start: start,
+    slot_duration_min: s.durationMin,
+    source: 'app',
+    flags: {},
+    visit_track: s.track,
+    service_code: s.code,
+    service_key: state.serviceKey,
+    /* שלושה שדות במכוון: הפרטי והמשפחה בנפרד להעתקה מדויקת לאודורו,
+       ו-patient_name המחובר לתצוגה, לחיפוש, ולתאימות לרשומות ישנות. */
+    patient_first: state.form.first,
+    patient_last: state.form.last,
+    patient_name: (state.form.first + ' ' + state.form.last).trim(),
+    patient_phone: state.form.phone,
+    patient_id_number: state.form.idnum || null,
+    patient_note: state.form.note || null,
+    status: 'pending',
+    status_changed_at: null,
+    cancel_reason: null,
+    lead_source: lead.lead_source || 'direct',
+    utm: lead.utm || {},
+    gclid: lead.gclid || null,
+    referrer: lead.referrer || null,
+    device: lead.device || 'desktop',
+    /* ייחוס רב-מגעי — ראו ההסבר במודול Lead */
+    first_touch_at: lead.first_touch_at || null,
+    reentry_src: lead.reentry_src || null,
+    attribution_recovered: !!lead.attribution_recovered,
+    conversion_sent: true,
+    offline_uploaded: false
+  };
+}
+
+/* ── מסך 6 ── */
+function drawConfirm() {
+  const s = svc(), d = state.selDate;
+  setHeader(T.s6.hdrTitle, []);
+  const dateStr = d.getDate() + '.' + (d.getMonth()+1) + '.' + d.getFullYear();
+  $body().innerHTML = `
+    <div class="ok-circle">✓</div>
+    <div class="ok-title">${esc(T.s6.title)}</div>
+    <p class="ok-lead">${esc(T.s6.lead)}</p>
+    <div class="summary">
+      <div>${esc(T.s6.dateLbl)} ${esc(dateStr)}</div>
+      <div>${esc(T.s6.timeLbl)} ${esc(state.selTime)}</div>
+      <div>${esc(T.s6.topicLbl)} ${esc(s.topic)}</div>
+    </div>
+    <div class="clinic-foot">${esc(T.clinic.footName)}<br>${esc(T.clinic.footAddr)}</div>
+  `;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+   9. אתחול
+   ══════════════════════════════════════════════════════════════════ */
+/* נקודת אחיזה לבדיקות אוטומטיות ולאיתור תקלות מקונסול הדפדפן.
+   אין כאן שום סוד — כל הקוד ממילא גלוי בצד הלקוח. */
+window.HollandBooking = { CONFIG, TEXTS, Cal, Lead, Track, Store, state,
+                          buildAppointment, go };
+
+(function init(){
+  const lead = Lead.capture();
+  Debug.log('lead captured', lead);
+  Track.step('booking_start');
+  render();
+  if (!CONFIG.demoMode) Store.init().catch(e => Debug.log('firebase init נכשל', String(e)));
+})();
+</script>
+
+<!--
+═══════════════════════════════════════════════════════════════════════
+  נדרש גם באתר dr-holland.co.il — ראו site-link-snippet.html
+  בלי זה, ה-gclid נשאר על דף הנחיתה ולא מגיע לכאן, וכל ליד ממודעה
+  ייספר כ"ישיר".
+═══════════════════════════════════════════════════════════════════════
+-->
+</body>
+</html>

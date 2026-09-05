@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>יומן תורים — צוות המרפאה</title>
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22%D7%99%D7%95%D7%9E%D7%9F%20%D7%AA%D7%95%D7%A8%D7%99%D7%9D%22%2C%22display%22%3A%22standalone%22%7D">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!--
+═══════════════════════════════════════════════════════════════════════
+  מרפאת ד"ר רונן הולנד — מסך פנימי לצוות
+  שלב 3
+
+  קובץ נפרד מ-booking.html במכוון: הוא דורש הזדהות, והאפליקציה של
+  המטופל לא צריכה לשאת את הקוד הזה.
+
+  ⚠️ הקובץ הזה מציג שמות, ניידים וסוגי טיפול. הוא לא אמור להיות
+     מקושר מהאתר, ו-robots.txt לא מספיק — ההגנה האמיתית היא
+     Firebase Auth יחד עם firestore.rules.
+
+  זרימת הצבעים (לפי האיפיון):
+     כתום  = נקלט, בטיפול
+     אדום  = עברו שעתיים מאז ההודעה הראשונה בלי תגובה
+     ירוק  = שולם והועתק לאודורו
+     אפור  = בוטל (הסלוט השתחרר, ניתן להחיות)
+═══════════════════════════════════════════════════════════════════════
+-->
+
+<style>
+:root{
+  --navy:#2b3a5c; --navy-dark:#22304c;
+  --sage:#7ba39b; --sage-hover:#6d938b;
+  --mint:#dff0ec;
+  --orange:#e8a33d; --orange-bg:#fdf3e3;
+  --green:#4d9d6d;  --green-bg:#e8f5ed;
+  --red:#c85a4e;    --red-bg:#fbeae8;
+  --grey:#9aa0a8;   --grey-bg:#f2f3f5;
+  --line:#e4e4e4; --text:#2f3542; --muted:#6f7683;
+  --radius:10px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
+  color:var(--text);background:#f7f8f9;font-size:16px;line-height:1.5}
+.wrap{max-width:760px;margin:0 auto;min-height:100vh;background:#fff}
+
+/* ── כניסה ── */
+#login{padding:60px 24px;max-width:400px;margin:0 auto}
+#login h1{font-size:22px;color:var(--navy);text-align:center;margin:0 0 6px}
+#login .sub{text-align:center;color:var(--muted);font-size:15px;margin-bottom:32px}
+#login input{width:100%;font-family:inherit;font-size:17px;padding:15px 14px;
+  border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px}
+#login button{width:100%;background:var(--navy);color:#fff;border:none;
+  border-radius:var(--radius);padding:17px;font:700 17px inherit;cursor:pointer}
+#loginErr{color:var(--red);font-size:15px;margin-top:14px;text-align:center;min-height:22px}
+
+/* ── כותרת ── */
+.top{background:var(--navy);color:#fff;padding:16px 20px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  position:sticky;top:0;z-index:20}
+.top h1{margin:0;font-size:18px;font-weight:700}
+.top .who{font-size:13px;opacity:.8}
+.top button{background:transparent;border:1px solid rgba(255,255,255,.45);
+  color:#fff;border-radius:8px;padding:7px 12px;font:500 14px inherit;cursor:pointer}
+
+/* ── לשוניות ── */
+.tabs{display:flex;border-bottom:1px solid var(--line);background:#fff;
+  position:sticky;top:56px;z-index:19}
+.tab{flex:1;padding:15px 6px;text-align:center;background:none;border:none;
+  font:500 15px inherit;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent}
+.tab.on{color:var(--navy);font-weight:700;border-bottom-color:var(--sage)}
+.tab .n{display:inline-block;min-width:21px;padding:0 6px;margin-inline-start:5px;
+  background:var(--grey-bg);border-radius:11px;font-size:13px;color:var(--muted)}
+.tab.on .n{background:var(--sage);color:#fff}
+
+/* ── סרגל ── */
+.bar{padding:14px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  border-bottom:1px solid var(--line)}
+.bar input[type=search]{flex:1;min-width:170px;font-family:inherit;font-size:16px;
+  padding:11px 13px;border:1px solid var(--line);border-radius:8px}
+.btn-add{background:var(--sage);color:#fff;border:none;border-radius:8px;
+  padding:11px 16px;font:700 15px inherit;cursor:pointer;white-space:nowrap}
+.btn-add:hover{background:var(--sage-hover)}
+.daynav{display:flex;align-items:center;gap:8px}
+.daynav button{background:#fff;border:1px solid var(--line);border-radius:8px;
+  width:38px;height:38px;font-size:17px;color:var(--navy);cursor:pointer;font-family:inherit}
+.daynav .lbl{font-weight:700;color:var(--navy);min-width:130px;text-align:center;font-size:15px}
+
+/* ── כרטיס תור ── */
+.list{padding:16px 20px 40px}
+.card{border-radius:var(--radius);border:1px solid var(--line);
+  border-inline-start:5px solid var(--orange);background:var(--orange-bg);
+  padding:15px 16px;margin-bottom:13px}
+.card.green{border-inline-start-color:var(--green);background:var(--green-bg)}
+.card.red{border-inline-start-color:var(--red);background:var(--red-bg)}
+.card.grey{border-inline-start-color:var(--grey);background:var(--grey-bg);opacity:.82}
+.card .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.card .when{font-weight:700;font-size:17px;color:var(--navy)}
+.card .name{font-weight:700;font-size:17px}
+.card .meta{color:var(--muted);font-size:14px;margin-top:3px}
+.card .topic{margin-top:7px;font-size:15px}
+
+/* ── פרטי המטופל: שורות מיושרות לימין, אחת מתחת לשנייה ── */
+.fields{margin-top:9px;text-align:right}
+.fields .row{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:4px}
+.fields .f{display:flex;align-items:baseline;gap:6px;min-width:0}
+.fields .k{color:var(--muted);font-size:14px;white-space:nowrap}
+.fields .v{font-weight:700;font-size:16px;cursor:pointer;border-bottom:1px dashed transparent;
+  padding:1px 2px;border-radius:4px;transition:background .12s}
+.fields .v:hover{background:rgba(43,58,92,.09);border-bottom-color:var(--muted)}
+.fields .v.copied{background:var(--green-bg);border-bottom-color:var(--green)}
+.fields .v.none{font-weight:400;color:var(--muted);cursor:default}
+.fields .v.none:hover{background:none;border-bottom-color:transparent}
+
+/* ── מצב העתקה לאודורו ── */
+.copybar{margin-top:10px;padding:11px 13px;border-radius:8px;background:#fff;
+  border:1px solid var(--navy);display:none}
+.copybar.on{display:block}
+.copybar .step{font-size:14px;color:var(--muted);margin-bottom:8px}
+.copybar .next{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.copybar .nextval{font-weight:700;font-size:17px;color:var(--navy)}
+.copybar button{background:var(--navy);color:#fff;border:none;border-radius:8px;
+  padding:10px 16px;font:700 15px inherit;cursor:pointer}
+.copybar button.ghost{background:#fff;color:var(--muted);border:1px solid var(--line);font-weight:500}
+.copybar .done{color:var(--green);font-weight:700;font-size:15px}
+.copybar .track{display:flex;gap:5px;margin-top:9px}
+.copybar .track i{flex:1;height:4px;border-radius:2px;background:var(--line);font-style:normal}
+.copybar .track i.ok{background:var(--green)}
+.copybar .track i.cur{background:var(--navy)}
+.card .note{margin-top:8px;padding:9px 11px;background:rgba(255,255,255,.75);
+  border-radius:7px;font-size:14px;color:var(--text)}
+.card a.tel{color:var(--navy);font-weight:500;text-decoration:none;border-bottom:1px dashed}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.badge{font-size:12.5px;padding:3px 9px;border-radius:20px;background:#fff;
+  border:1px solid var(--line);color:var(--muted)}
+.badge.ret{background:var(--mint);border-color:var(--sage);color:var(--navy);font-weight:700}
+.badge.manual{background:#eef1f6;border-color:#c7d0e0;color:var(--navy)}
+.badge.late{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+
+.checks{margin-top:12px;padding-top:11px;border-top:1px solid rgba(0,0,0,.08)}
+.chk{display:flex;align-items:flex-start;gap:9px;padding:6px 0;cursor:pointer;font-size:15px}
+.chk input{width:19px;height:19px;margin:2px 0 0;flex:none;accent-color:var(--sage);cursor:pointer}
+.chk .stamp{display:block;font-size:12.5px;color:var(--muted);margin-top:1px}
+.chk.danger{color:var(--red)}
+.acts{display:flex;gap:9px;margin-top:11px;flex-wrap:wrap}
+.acts button{background:#fff;border:1px solid var(--navy);color:var(--navy);
+  border-radius:8px;padding:9px 14px;font:500 14px inherit;cursor:pointer}
+.acts button:hover{background:#f4f7fb}
+.acts button.primary{background:var(--navy);color:#fff}
+.acts .wabtn{display:inline-block;text-decoration:none;background:#fff;
+  border:1px solid #25a35a;color:#1c7d45;border-radius:8px;
+  padding:9px 14px;font:500 14px inherit;cursor:pointer}
+.acts .wabtn:hover{background:#eefaf2}
+.acts .wabtn.go{background:#25a35a;color:#fff;font-weight:700}
+.acts .wabtn.go:hover{background:#1f8d4d}
+
+.empty{text-align:center;color:var(--muted);padding:50px 20px;font-size:16px}
+
+/* ── לוח שנה חודשי בלשונית היומן ── */
+.mcal{border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:20px}
+.mcal .nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mcal .nav button{background:#fff;border:1px solid var(--line);border-radius:8px;
+  width:36px;height:36px;font-size:17px;color:var(--navy);cursor:pointer;font-family:inherit}
+.mcal .nav .mon{font-weight:700;color:var(--navy);font-size:16px}
+.mcal .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.mcal .dw{text-align:center;font-size:12px;color:var(--muted);padding:4px 0}
+.mcal .d{aspect-ratio:1;border:none;border-radius:8px;background:#fff;color:var(--text);
+  font-family:inherit;font-size:14px;cursor:pointer;position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:0}
+.mcal .d:hover{background:var(--grey-bg)}
+.mcal .d.closed{background:#fafafa;color:#c9cdd3;cursor:default}
+.mcal .d.closed:hover{background:#fafafa}
+.mcal .d.today{outline:2px solid var(--sage);outline-offset:-2px;font-weight:700}
+.mcal .d.sel{background:var(--navy);color:#fff;font-weight:700}
+.mcal .d.blank{background:transparent;cursor:default}
+.mcal .d .dots{display:flex;gap:2px;height:5px}
+.mcal .d .dots i{width:5px;height:5px;border-radius:50%;font-style:normal}
+.mcal .d .dots i.orange{background:var(--orange)}
+.mcal .d .dots i.red{background:var(--red)}
+.mcal .d .dots i.green{background:var(--green)}
+.mcal .d.sel .dots i{box-shadow:0 0 0 1px #fff}
+
+/* ── ציר היום ── */
+.dayhdr{font-weight:700;color:var(--navy);font-size:17px;margin:0 0 12px}
+.free{border:1px dashed var(--line);border-radius:var(--radius);padding:12px 15px;
+  margin-bottom:13px;display:flex;justify-content:space-between;align-items:center;
+  gap:10px;flex-wrap:wrap;background:#fcfdfd}
+.free .t{font-weight:700;color:var(--sage);font-size:16px}
+.free .lbl{color:var(--muted);font-size:14px}
+.free button{background:#fff;border:1px solid var(--sage);color:var(--sage);
+  border-radius:8px;padding:8px 14px;font:700 14px inherit;cursor:pointer}
+.free button:hover{background:var(--mint)}
+.closedday{text-align:center;color:var(--muted);background:var(--grey-bg);
+  border-radius:var(--radius);padding:16px;font-size:15px;margin-bottom:16px}
+.day-head{font-weight:700;color:var(--navy);margin:22px 0 11px;font-size:16px}
+.day-head:first-child{margin-top:0}
+
+/* ── חלון ── */
+.modal{position:fixed;inset:0;background:rgba(20,25,35,.55);z-index:40;
+  display:flex;align-items:flex-end;justify-content:center}
+.modal .sheet{background:#fff;width:100%;max-width:520px;border-radius:16px 16px 0 0;
+  padding:22px 20px 30px;max-height:92vh;overflow:auto}
+@media(min-width:560px){.modal{align-items:center}.modal .sheet{border-radius:16px}}
+.sheet h2{margin:0 0 4px;font-size:19px;color:var(--navy)}
+.sheet .sub{color:var(--muted);font-size:14px;margin-bottom:18px}
+.sheet label{display:block;font-weight:700;font-size:15px;color:var(--navy);margin:0 0 5px}
+.sheet input,.sheet select,.sheet textarea{width:100%;font-family:inherit;font-size:16px;
+  padding:12px 13px;border:1px solid var(--line);border-radius:8px;margin-bottom:15px;background:#fff}
+.sheet textarea{min-height:70px;resize:vertical}
+.sheet .row{display:flex;gap:10px}
+.sheet .row>*{flex:1}
+.sheet .err{color:var(--red);font-size:14px;margin:-9px 0 13px;display:none}
+.sheet .err.on{display:block}
+.slotpick{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px;margin-bottom:16px}
+.slotpick button{border:1px solid var(--line);background:#fff;border-radius:8px;
+  padding:11px 4px;font:500 15px inherit;cursor:pointer;color:var(--text)}
+.slotpick button.on{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:700}
+.sheet .go{width:100%;background:var(--sage);color:#fff;border:none;border-radius:var(--radius);
+  padding:16px;font:700 17px inherit;cursor:pointer}
+.sheet .cancel{width:100%;background:none;border:none;color:var(--muted);
+  padding:14px;font:500 15px inherit;cursor:pointer;margin-top:4px}
+
+#toast{position:fixed;bottom:22px;right:50%;transform:translateX(50%);
+  background:var(--navy);color:#fff;padding:13px 22px;border-radius:26px;
+  font-size:15px;z-index:60;opacity:0;transition:opacity .22s;pointer-events:none;
+  max-width:90vw;text-align:center}
+#toast.on{opacity:1}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div id="login">
+    <h1>יומן תורים</h1>
+    <div class="sub">מרפאת ד"ר רונן הולנד · צוות בלבד</div>
+    <input id="email" type="email" placeholder="כתובת מייל" autocomplete="username">
+    <input id="pass" type="password" placeholder="סיסמה" autocomplete="current-password">
+    <button id="loginBtn">כניסה</button>
+    <div id="loginErr"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="top">
+      <div><h1>יומן תורים</h1><div class="who" id="whoami"></div></div>
+      <button id="logout">יציאה</button>
+    </div>
+    <div class="tabs">
+      <button class="tab on" data-tab="todo">לטיפול <span class="n" id="nTodo">0</span></button>
+      <button class="tab" data-tab="day">יומן</button>
+      <button class="tab" data-tab="cancelled">מבוטלים <span class="n" id="nCanc">0</span></button>
+    </div>
+    <div class="bar">
+      <input type="search" id="search" placeholder="🔍 חיפוש לפי מספר נייד…" inputmode="numeric">
+      <div class="daynav hidden" id="daynav">
+        <button id="dPrev">›</button><div class="lbl" id="dLbl"></div><button id="dNext">‹</button>
+      </div>
+      <button class="btn-add" id="addBtn">+ תור ידני</button>
+    </div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="modalHost"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, query, where, orderBy, limit, onSnapshot,
+         doc, getDoc, runTransaction, Timestamp }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+/* ══════════════════════════════════════════════════════════════════
+   1. הגדרות — להעתיק את אותם ערכים כמו ב-booking.html
+   ══════════════════════════════════════════════════════════════════ */
+const FIREBASE = {
+  apiKey:            'AIzaSyCCjGaou3W0izd_Y2MYLmJ-8flPTM3F-Lk',
+  authDomain:        'holland-booking.firebaseapp.com',
+  projectId:         'holland-booking',
+  storageBucket:     'holland-booking.firebasestorage.app',
+  messagingSenderId: '215347674704',
+  appId:             '1:215347674704:web:cc8b50f93c34c8d6859b55'
+};
+
+const CFG = {
+  /* קישור קבוע לתשלום מקדמה (INVOICE4U). נכנס לכל מקום שבו כתוב
+     {תשלום} בנוסחי הוואטסאפ. אם ריק — ההודעה תיפתח בלי שורת הקישור. */
+  paymentLink:  'https://private.invoice4u.co.il/newsite/he/clearing/public/' +
+                'i4u-payment?ProductGuid=8bdfb2da-1c46-4e9b-87e6-2d1814d0232d',
+
+  /* ── מי חתום על ההודעות למטופל ──────────────────────────────────
+     תמיד עתליה, גם כשרוני שולח בפועל. זו החלטה מכוונת ולא פשרה:
+     בקשת מקדמה היא תפקיד מזכירותי, ומטופל שמקבל אותה מהרופא שלו
+     מקבל מסר מבלבל על מי עומד מולו. רוני משמש כגיבוי לעתליה,
+     והמטופל לא אמור להבחין בכך.
+
+     מופיע בנוסחים כ-{שולח}. לשינוי — כאן, במקום אחד. */
+  clinicVoice: 'עתליה',
+
+  lateHours:    2,        // אחרי כמה שעות ללא תגובה הסלוט הופך לאדום
+  baseGridMin:  10,       // חייב להיות זהה ל-booking.html
+  historyDays:  14,       // כמה ימים אחורה נטענים למסך
+  hours: {                // חייב להיות זהה ל-booking.html
+    0:{open:'09:30',close:'13:00'}, 1:{open:'09:00',close:'14:00'},
+    2:{open:'08:30',close:'12:30'}, 3:null,
+    4:{open:'09:00',close:'14:00'}, 5:null, 6:null
+  },
+  durations: { 30:'ביקור חדש', 20:'ביקורת — פרונטלי', 10:'ביקורת טלפוני / חידוש מרשם' },
+  serviceNames: { A:'שיפור התפקוד המיני', B:'מחלות מין (STD)', C:'קונדילומה',
+                  D:'ייעוץ אורולוגי כללי', R:'ביקורת', P:'חידוש מרשם' }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   נוסחי הוואטסאפ — הבלוק שרוני עורך
+   ─────────────────────────────────────────────────────────────────
+   ההודעה נפתחת בוואטסאפ כבר כתובה, מוכנה לשליחה. שום דבר לא נשלח
+   אוטומטית — אתה תמיד רואה, עורך אם צריך, ולוחץ שלח בעצמך.
+
+   מה שבסוגריים מוחלף אוטומטית:
+     {שם}     שם פרטי של המטופל
+     {תאריך}  למשל: יום שני 7.9
+     {שעה}    למשל: 09:00
+     {נושא}   נושא הטיפול
+     {תשלום}  קישור התשלום מ-CFG.paymentLink (נעלם אם ריק)
+
+   שורה חדשה נכתבת כ-\n. אפשר לשנות כל מילה כאן בלי לגעת בקוד.
+   ══════════════════════════════════════════════════════════════════ */
+const WA = {
+  first:
+    'שלום {שם}, זו {שולח} מהמרפאה הפרטית של ד"ר הולנד.\n' +
+    'נקבעה לך פגישת יעוץ בתאריך {תאריך} בשעה {שעה}.\n' +
+    'בנושא: {נושא}\n\n' +
+    'אתה מוזמן לכתוב לי כאן אם יש שאלות נוספות לקראת היעוץ\n\n' +
+    'כדי לשריין את התור אתה מתבקש לשלם מקדמה דרך הקישור המצורף (אשראי או ביט).\n' +
+    '{תשלום}' +
+    'לא נוכל לשריין את התור ללא תשלום המקדמה',
+
+  cancel:
+    'שלום {שם}, לא קיבלנו אישור על תשלום המקדמה\n\n' +
+    'התור שקבעת ל{תאריך} בשעה {שעה} מבוטל.\n\n' +
+    'המשך יום שקט.',
+
+  reminder:
+    'שלום {שם}, זו {שולח} מהמרפאה הפרטית של ד"ר הולנד.\n\n' +
+    'רצינו לוודא שקיבלת את ההודעה לגבי התור ל{תאריך} בשעה {שעה}.\n' +
+    'התור ממתין לך, ונשמר עד לקבלת המקדמה.\n\n' +
+    '{תשלום}'
+};
+
+const TXT = {
+  cb1: 'נשלחה הודעה ראשונה עם קישור לתשלום',
+  cb2: 'המטופל שילם + התור הועתק לאודורו',
+  cb3: 'המטופל לא הגיב — ביטול התור',
+  cbManual: 'התור הועתק לאודורו',
+  cancelWarn: 'לבטל את התור?\n\nהסלוט ישתחרר לקביעה, והתור יעבור לרשימת המבוטלים.\nאת הודעת הביטול למטופל יש לשלוח ידנית בווטסאפ.',
+  reviveWarn: 'להחזיר את התור ליומן?\nהפעולה תתפוס מחדש את הסלוט, אם הוא עדיין פנוי.',
+  noSlot: 'הסלוט כבר נתפס. יש לקבוע מועד אחר.',
+  saved: 'נשמר',
+  cancelled: 'התור בוטל והסלוט שוחרר',
+  revived: 'התור הוחזר ליומן'
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   2. תשתית
+   ══════════════════════════════════════════════════════════════════ */
+if (!FIREBASE.apiKey) {
+  document.getElementById('login').innerHTML =
+    '<h1>חסרות הגדרות Firebase</h1><div class="sub" style="margin-top:14px;line-height:1.7">' +
+    'יש להעתיק את בלוק <code>FIREBASE</code> לראש הקובץ — אותם ששה ערכים ' +
+    'שהוזנו ב-booking.html.<br>ראו FIREBASE-SETUP.md, סעיף 5.</div>';
+  throw new Error('no firebase config');
+}
+
+const app  = initializeApp(FIREBASE);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+
+const $  = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let toastT;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600);
+}
+
+const DOW = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
+const pad = (n) => String(n).padStart(2,'0');
+const isoOf   = (d) => d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const hhmmOf  = (d) => pad(d.getHours())+':'+pad(d.getMinutes());
+const unitKey = (d) => pad(d.getHours())+pad(d.getMinutes());
+const toMin   = (s) => { const [h,m]=s.split(':').map(Number); return h*60+m; };
+
+const dateOf = (a) => a.slot_start && a.slot_start.toDate ? a.slot_start.toDate()
+                                                          : new Date(a.slot_start);
+const stampOf = (v) => !v ? null : (v.toDate ? v.toDate() : new Date(v));
+
+function unitsOf(appt) {
+  const d = dateOf(appt), out = [];
+  const start = d.getHours()*60 + d.getMinutes();
+  for (let m = start; m < start + (appt.slot_duration_min||30); m += CFG.baseGridMin) {
+    out.push(pad(Math.floor(m/60)) + pad(m%60));
+  }
+  return out;
+}
+
+/* ── מצב הסלוט: הכלל מהאיפיון, מחושב בזמן תצוגה ולא בתהליך רקע ── */
+function statusOf(a) {
+  if (a.status === 'cancelled') return 'grey';
+  const f = a.flags || {};
+  if (a.source === 'manual') return f.copied_at ? 'green' : 'orange';
+  if (f.paid_entered_at) return 'green';
+  if (f.contacted_at) {
+    const t = stampOf(f.contacted_at);
+    if (t && Date.now() - t.getTime() > CFG.lateHours*3600e3) return 'red';
+  }
+  return 'orange';
+}
+
+const fmtStamp = (v) => {
+  const d = stampOf(v); if (!d) return '';
+  return 'סומן ' + d.getDate()+'.'+(d.getMonth()+1)+' ב-'+hhmmOf(d);
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   3. כניסה
+   ══════════════════════════════════════════════════════════════════ */
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  try {
+    await signInWithEmailAndPassword(auth, $('email').value.trim(), $('pass').value);
+  } catch (e) {
+    $('loginErr').textContent = /password|credential|user-not-found/i.test(String(e))
+      ? 'מייל או סיסמה שגויים' : 'שגיאת כניסה. נסו שוב.';
+  }
+};
+$('pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
+$('logout').onclick = () => signOut(auth);
+
+let unsub = null;
+onAuthStateChanged(auth, (user) => {
+  if (unsub) { unsub(); unsub = null; }
+  if (!user) {
+    $('login').classList.remove('hidden'); $('app').classList.add('hidden');
+    return;
+  }
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  $('whoami').textContent = user.email;
+  subscribe();
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   4. נתונים בזמן אמת
+   כל שינוי — תור חדש, סימון צ'קבוקס, ביטול — מופיע מיד בכל מכשיר
+   שפתוח בו המסך, בלי רענון.
+   ══════════════════════════════════════════════════════════════════ */
+let appts = [];
+const state = { tab: 'todo', day: new Date(), search: '', calMonth: null };
+state.day.setHours(0,0,0,0);
+
+/* ── למה אין כאן where על התאריך ─────────────────────────────────────
+   ב-Firestore, פילטר טווח מול Timestamp לא מתאים למסמכים שבהם השדה
+   נשמר כמחרוזת. תקלה אמיתית שקרתה: booking.html כתב מחרוזת ISO,
+   staff.html חיפש Timestamp, והתור פשוט לא הופיע — למרות שהיה במסד.
+
+   שני הקבצים כותבים היום Timestamp, אבל הסתמכות על התאמת טיפוסים בין
+   שני קבצים נפרדים היא שבירה מדי. לכן: מושכים את המסמכים האחרונים
+   וּמסננים בדפדפן, שם dateOf() יודע לקרוא גם מחרוזת וגם Timestamp.
+   בנפח של המרפאה (מאות תורים בשנה) זה זול לגמרי, וחסין לתקלה הזו.
+   ─────────────────────────────────────────────────────────────────── */
+function subscribe() {
+  const q = query(collection(db,'appointments'), orderBy('slot_start','desc'), limit(400));
+  unsub = onSnapshot(q,
+    (snap) => {
+      const from = new Date();
+      from.setDate(from.getDate() - CFG.historyDays);
+      from.setHours(0,0,0,0);
+      appts = snap.docs
+        .map(d => Object.assign({ _id:d.id }, d.data()))
+        .filter(a => { const t = dateOf(a); return t instanceof Date && !isNaN(t) && t >= from; })
+        .sort((x,y) => dateOf(x) - dateOf(y));
+      render();
+    },
+    (err) => {
+      console.error(err);
+      const perm = String(err && err.code || '').includes('permission');
+      $('list').innerHTML = '<div class="empty">' +
+        (perm ? 'אין הרשאה לקרוא את התורים.<br>יש לוודא שהמייל שאיתו נכנסתם מופיע ברשימת הצוות ב-firestore.rules.'
+              : 'שגיאת חיבור למסד הנתונים.<br>' + esc(String(err && err.message || err))) +
+        '</div>';
+    });
+}
+
+/* הסלוט האדום נקבע לפי שעתיים מהסימון. מסך שנשאר פתוח צריך
+   להאדים מעצמו, ולכן ריענון תצוגה קל כל דקה. אין כאן קריאה לשרת. */
+setInterval(() => { if (appts.length) render(); }, 60000);
+
+/* ══════════════════════════════════════════════════════════════════
+   5. כתיבה — תמיד בטרנזקציה
+   שני אנשים על אותו כרטיס באותו רגע לא יכולים לדרוס זה את זה.
+   ══════════════════════════════════════════════════════════════════ */
+async function setFlag(id, field, on) {
+  const ref = doc(db,'appointments',id);
+  try {
+    await runTransaction(db, async (tx) => {
+      const s = await tx.get(ref);
+      if (!s.exists()) throw new Error('missing');
+      const a = s.data();
+      const flags = Object.assign({}, a.flags || {});
+      flags[field] = on ? Timestamp.now() : null;
+
+      const patch = { flags, status_changed_at: Timestamp.now() };
+      // הסטטוס נגזר מהצ'קבוקסים — לא נשמר בנפרד ולא יכול לסתור אותם
+      if (field === 'paid_entered_at' || field === 'copied_at') {
+        patch.status = on ? 'entered_to_odoro' : 'pending';
+      }
+      tx.update(ref, patch);
+    });
+  } catch (e) { console.error(e); toast('השמירה נכשלה'); }
+}
+
+/* ביטול: משחרר את הסלוט ומעביר לרשימת המבוטלים — שני מסמכים,
+   טרנזקציה אחת, כדי שלא ייווצר מצב ביניים. */
+async function cancelAppt(a) {
+  if (!confirm(TXT.cancelWarn)) return;
+  const dIso = isoOf(dateOf(a)), units = unitsOf(a);
+  try {
+    await runTransaction(db, async (tx) => {
+      const dayRef = doc(db,'day_slots',dIso);
+      const dSnap  = await tx.get(dayRef);
+      if (dSnap.exists()) {
+        const u = Object.assign({}, dSnap.data().units || {});
+        units.forEach(k => { if (u[k] && u[k].a === a._id) delete u[k]; });
+        tx.update(dayRef, { units: u });
+      }
+      tx.update(doc(db,'appointments',a._id), {
+        status: 'cancelled',
+        status_changed_at: Timestamp.now(),
+        cancel_reason: 'לא הגיב / לא שולמה מקדמה'
+      });
+    });
+    toast(TXT.cancelled);
+  } catch (e) { console.error(e); toast('הביטול נכשל'); }
+}
+
+async function reviveAppt(a) {
+  if (!confirm(TXT.reviveWarn)) return;
+  const dIso = isoOf(dateOf(a)), units = unitsOf(a);
+  try {
+    await runTransaction(db, async (tx) => {
+      const dayRef = doc(db,'day_slots',dIso);
+      const dSnap  = await tx.get(dayRef);
+      const cur = dSnap.exists() ? (dSnap.data().units || {}) : {};
+      for (const k of units) {
+        const v = cur[k];
+        if (v && (!v.e || Date.now() < v.e) && v.a !== a._id) throw new Error('TAKEN');
+      }
+      const next = Object.assign({}, cur);
+      units.forEach(k => { next[k] = { a: a._id, e: null }; });
+      tx.set(dayRef, { date: dIso, units: next }, { merge: true });
+      tx.update(doc(db,'appointments',a._id), {
+        status: 'pending', status_changed_at: Timestamp.now(), cancel_reason: null
+      });
+    });
+    toast(TXT.revived);
+  } catch (e) {
+    toast(String(e).includes('TAKEN') ? TXT.noSlot : 'ההחזרה נכשלה');
+  }
+}
+
+/* תור ידני / תור המשך — אותה נעילה אטומית בדיוק כמו בזרימת המטופל.
+   זה מה שמונע התנגשות בין תור שהצוות מזין לתור שנקבע במקביל. */
+async function createManual(data) {
+  const dIso = isoOf(data.when), units = [];
+  const start = data.when.getHours()*60 + data.when.getMinutes();
+  for (let m = start; m < start + data.duration; m += CFG.baseGridMin)
+    units.push(pad(Math.floor(m/60)) + pad(m%60));
+
+  const id = crypto.randomUUID();
+  const appt = {
+    id, created_at: Timestamp.now(),
+    slot_start: Timestamp.fromDate(data.when),
+    slot_duration_min: data.duration,
+    visit_track: data.duration === 30 ? 'new' : 'follow',
+    service_code: data.serviceCode,
+    patient_first: data.first, patient_last: data.last,
+    patient_name: (data.first + ' ' + data.last).trim(),
+    patient_phone: data.phone,
+    patient_id_number: data.idnum || null, patient_note: data.note || null,
+    status: 'pending', status_changed_at: null, cancel_reason: null,
+    source: 'manual', created_by: auth.currentUser ? auth.currentUser.email : null,
+    flags: {},
+    // תור ידני לא הגיע מקמפיין — ולכן לא ייספר כהמרה מגוגל.
+    lead_source: 'staff', utm: {}, gclid: null, referrer: null, device: 'staff',
+    first_touch_at: null, reentry_src: null, attribution_recovered: false,
+    conversion_sent: false, offline_uploaded: false
+  };
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const dayRef = doc(db,'day_slots',dIso);
+      const dSnap  = await tx.get(dayRef);
+      const cur = dSnap.exists() ? (dSnap.data().units || {}) : {};
+      for (const k of units) {
+        const v = cur[k];
+        if (v && (!v.e || Date.now() < v.e)) throw new Error('TAKEN');
+      }
+      const next = Object.assign({}, cur);
+      units.forEach(k => { next[k] = { a: id, e: null }; });
+      tx.set(dayRef, { date: dIso, units: next }, { merge: true });
+      tx.set(doc(db,'appointments',id), appt);
+    });
+    return { ok:true };
+  } catch (e) {
+    return { ok:false, taken: String(e).includes('TAKEN') };
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   6. תצוגה
+   ══════════════════════════════════════════════════════════════════ */
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  state.tab = b.dataset.tab;
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  $('daynav').classList.toggle('hidden', state.tab !== 'day');
+  render();
+});
+$('search').oninput = (e) => { state.search = e.target.value.replace(/\D/g,''); render(); };
+const shiftDay = (n) => {
+  state.day.setDate(state.day.getDate() + n);
+  // הלוח החודשי עוקב אחרי היום הנבחר כשעוברים חודש
+  state.calMonth = new Date(state.day.getFullYear(), state.day.getMonth(), 1);
+  render();
+};
+$('dPrev').onclick = () => shiftDay(-1);
+$('dNext').onclick = () => shiftDay(1);
+$('addBtn').onclick = () => openManual(null);
+
+function visible() {
+  let list = appts.slice();
+  if (state.search) {
+    return list.filter(a => (a.patient_phone||'').includes(state.search));
+  }
+  if (state.tab === 'cancelled') return list.filter(a => a.status === 'cancelled');
+  if (state.tab === 'day') {
+    const iso = isoOf(state.day);
+    return list.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === iso);
+  }
+  // "לטיפול" — כל מה שעדיין לא ירוק ולא מבוטל, הדחוף למעלה
+  return list.filter(a => a.status !== 'cancelled' && statusOf(a) !== 'green')
+             .sort((x,y) => {
+               const rank = (a) => statusOf(a) === 'red' ? 0 : 1;
+               return rank(x) - rank(y) || dateOf(x) - dateOf(y);
+             });
+}
+
+function render() {
+  $('nTodo').textContent = appts.filter(a => a.status !== 'cancelled' && statusOf(a) !== 'green').length;
+  $('nCanc').textContent = appts.filter(a => a.status === 'cancelled').length;
+  const d = state.day;
+  $('dLbl').textContent = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
+
+  // לשונית היומן: לוח חודשי + כל היום, פנויים ותפוסים כאחד
+  if (state.tab === 'day' && !state.search) { renderDayView(); return; }
+
+  const list = visible();
+  const host = $('list');
+  if (!list.length) {
+    host.innerHTML = '<div class="empty">' + (
+      state.search   ? 'לא נמצא תור עם מספר הנייד הזה' :
+      state.tab==='cancelled' ? 'אין תורים מבוטלים' :
+      state.tab==='day'       ? 'אין תורים ביום זה' :
+                                'אין תורים שממתינים לטיפול ✓') + '</div>';
+    return;
+  }
+
+  let html = '', lastDay = '';
+  const groupByDay = state.tab !== 'day';
+  list.forEach(a => {
+    if (groupByDay) {
+      const dt = dateOf(a), key = isoOf(dt);
+      if (key !== lastDay) {
+        lastDay = key;
+        html += '<div class="day-head">' + DOW[dt.getDay()] + ' ' +
+                dt.getDate() + '.' + (dt.getMonth()+1) + '.' + dt.getFullYear() + '</div>';
+      }
+    }
+    html += cardHtml(a);
+  });
+  host.innerHTML = html;
+  wire(host);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   6ג. לשונית היומן — לוח חודשי + ציר היום המלא
+   מציג את היום כרצף: כל תור תפוס במקומו האמיתי עם פרטי המטופל
+   ובצבע לפי אותה חוקיות של "לטיפול", וכל פער פנוי כשורה נפרדת
+   שאפשר לקבוע לתוכה ישירות.
+   ══════════════════════════════════════════════════════════════════ */
+function renderDayView() {
+  const host = $('list');
+  if (!state.calMonth) {
+    state.calMonth = new Date(state.day.getFullYear(), state.day.getMonth(), 1);
+  }
+  host.innerHTML = monthCalHtml() + '<div id="dayTimeline"></div>';
+  wireMonthCal();
+  paintTimeline();
+}
+
+function monthCalHtml() {
+  const m = state.calMonth;
+  const first = new Date(m.getFullYear(), m.getMonth(), 1);
+  const days  = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // סיכום מצב לכל יום — נקודות צבע קטנות מתחת למספר
+  const byDay = {};
+  appts.filter(a => a.status !== 'cancelled').forEach(a => {
+    const k = isoOf(dateOf(a));
+    (byDay[k] = byDay[k] || []).push(statusOf(a));
+  });
+
+  let cells = '';
+  for (let i = 0; i < first.getDay(); i++) cells += '<div class="d blank"></div>';
+  for (let dd = 1; dd <= days; dd++) {
+    const date = new Date(m.getFullYear(), m.getMonth(), dd);
+    const iso  = isoOf(date);
+    const closed = !CFG.hours[date.getDay()];
+    const sel  = iso === isoOf(state.day);
+    const isToday = iso === isoOf(today);
+    const sts = byDay[iso] || [];
+    const dots = ['red','orange','green']
+      .filter(c => sts.includes(c))
+      .map(c => '<i class="'+c+'"></i>').join('');
+    cells += '<button class="d'+(closed?' closed':'')+(sel?' sel':'')+(isToday?' today':'')+'"' +
+             ' data-day="'+iso+'"><span>'+dd+'</span><span class="dots">'+dots+'</span></button>';
+  }
+
+  return '<div class="mcal">' +
+    '<div class="nav">' +
+      '<button data-mon="-1">›</button>' +
+      '<span class="mon">'+MONTHS[m.getMonth()]+' '+m.getFullYear()+'</span>' +
+      '<button data-mon="1">‹</button>' +
+    '</div>' +
+    '<div class="grid">' +
+      ['א','ב','ג','ד','ה','ו','ש'].map(x=>'<div class="dw">'+x+'</div>').join('') +
+      cells +
+    '</div></div>';
+}
+
+function wireMonthCal() {
+  $('list').querySelectorAll('[data-mon]').forEach(b => b.onclick = () => {
+    const m = state.calMonth;
+    state.calMonth = new Date(m.getFullYear(), m.getMonth() + (+b.dataset.mon), 1);
+    renderDayView();
+  });
+  $('list').querySelectorAll('[data-day]').forEach(b => b.onclick = () => {
+    const [y,mo,dd] = b.dataset.day.split('-').map(Number);
+    state.day = new Date(y, mo-1, dd);
+    render();
+  });
+}
+
+function paintTimeline() {
+  const box = $('dayTimeline');
+  const d = state.day;
+  const w = CFG.hours[d.getDay()];
+  const iso = isoOf(d);
+
+  const dayAppts = appts
+    .filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === iso)
+    .sort((x,y) => dateOf(x) - dateOf(y));
+
+  let html = '<div class="dayhdr">' + DOW[d.getDay()] + ' ' + d.getDate() + '.' +
+             (d.getMonth()+1) + '.' + d.getFullYear() + '</div>';
+
+  if (!w) {
+    html += '<div class="closedday">היום סגור לקביעה עצמאית' +
+            (d.getDay() === 3 ? ' — יום מכבי' : '') +
+            '. אפשר להוסיף תור ידנית.</div>';
+  }
+
+  const openM  = w ? toMin(w.open)  : null;
+  const closeM = w ? toMin(w.close) : null;
+  const startOf = (a) => { const t = dateOf(a); return t.getHours()*60 + t.getMinutes(); };
+
+  // תורים שנקבעו מחוץ לשעות הפעילות מוצגים בנפרד, כדי שלא ייעלמו
+  const inside  = w ? dayAppts.filter(a => startOf(a) >= openM && startOf(a) < closeM) : [];
+  const outside = w ? dayAppts.filter(a => !(startOf(a) >= openM && startOf(a) < closeM)) : dayAppts;
+
+  if (w) {
+    let cursor = openM;
+    const q = inside.slice();
+    while (cursor < closeM) {
+      const next = q[0];
+      if (next && startOf(next) <= cursor) {
+        html += cardHtml(next);
+        cursor = Math.max(cursor + 1, startOf(next) + (next.slot_duration_min || 30));
+        q.shift();
+        continue;
+      }
+      const gapEnd = next ? Math.min(startOf(next), closeM) : closeM;
+      if (gapEnd > cursor) html += freeHtml(cursor, gapEnd);
+      cursor = gapEnd;
+    }
+    if (!inside.length && !outside.length) {
+      html += '<div class="empty" style="padding:20px">כל היום פנוי</div>';
+    }
+  }
+
+  if (outside.length) {
+    html += '<div class="dayhdr" style="margin-top:20px">מחוץ לשעות הפעילות</div>';
+    outside.forEach(a => { html += cardHtml(a); });
+  }
+
+  box.innerHTML = html;
+  wire(box);
+  box.querySelectorAll('[data-free]').forEach(b => b.onclick = () => {
+    openManual(null, { date: iso, time: b.dataset.free });
+  });
+}
+
+function freeHtml(fromMin, toMinEnd) {
+  const len = toMinEnd - fromMin;
+  const t = (m) => pad(Math.floor(m/60)) + ':' + pad(m%60);
+  return '<div class="free">' +
+      '<span class="t">' + t(fromMin) + ' – ' + t(toMinEnd) + '</span>' +
+      '<span class="lbl">פנוי · ' + len + ' דק׳</span>' +
+      '<button data-free="' + t(fromMin) + '">+ קבע כאן</button>' +
+    '</div>';
+}
+
+const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
+                'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+
+function cardHtml(a) {
+  const st = statusOf(a), f = a.flags || {}, d = dateOf(a);
+  const manual = a.source === 'manual';
+  const svcName = CFG.serviceNames[a.service_code] || '—';
+
+  const badges = [];
+  if (manual) badges.push('<span class="badge manual">תור ידני</span>');
+  if (a.last_visit) badges.push('<span class="badge ret">🔄 ביקור אחרון: '+esc(a.last_visit)+'</span>');
+  if (st === 'red') badges.push('<span class="badge late">מעל שעתיים ללא תגובה</span>');
+  if (a.lead_source && a.lead_source !== 'staff')
+    badges.push('<span class="badge">מקור: '+esc({google_ads:'גוגל אדס',organic:'אורגני',
+      whatsapp:'ווטסאפ',direct:'ישיר',referral:'הפניה',other_campaign:'קמפיין'}[a.lead_source]||a.lead_source)+'</span>');
+
+  let checks = '';
+  const wa = (kind, label, cls) =>
+    '<a class="wabtn'+(cls?' '+cls:'')+'" href="'+waLink(a, kind)+'" target="_blank" rel="noopener">'+
+    esc(label)+'</a>';
+
+  if (a.status === 'cancelled') {
+    checks = '<div class="acts">' +
+      wa('cancel','💬 שלח הודעת ביטול','go') +
+      '<button data-act="revive" data-id="'+a._id+'">החזרה ליומן</button></div>';
+  } else if (manual) {
+    checks = '<div class="checks">' + chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
+      '<div class="acts">' +
+        '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>' +
+        '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
+        '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
+  } else {
+    checks = '<div class="checks">' +
+        chk(a._id,'contacted_at',TXT.cb1,f.contacted_at) +
+        chk(a._id,'paid_entered_at',TXT.cb2,f.paid_entered_at) +
+      '</div><div class="acts">' +
+        (f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
+                        : wa('first','💬 הודעה ראשונה','go')) +
+        '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>' +
+        '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
+        '<button data-act="cancel" data-id="'+a._id+'">'+esc(TXT.cb3)+'</button></div>';
+  }
+
+  const n = splitName(a);
+  const val = (label, v) => v
+    ? '<span class="v" data-copy="'+esc(v)+'" title="לחיצה מעתיקה">'+esc(v)+'</span>'
+    : '<span class="v none">—</span>';
+
+  const fields =
+    '<div class="fields">' +
+      '<div class="row">' +
+        '<span class="f"><span class="k">שם פרטי:</span>'  + val('שם פרטי',  n.first) + '</span>' +
+        '<span class="f"><span class="k">שם משפחה:</span>' + val('שם משפחה', n.last)  + '</span>' +
+      '</div>' +
+      '<div class="row"><span class="f"><span class="k">מספר זהות:</span>' +
+        val('מספר זהות', a.patient_id_number) + '</span></div>' +
+      '<div class="row"><span class="f"><span class="k">נייד:</span>' +
+        val('נייד', a.patient_phone) +
+        '<a class="tel" style="margin-inline-start:10px;font-size:14px" href="tel:'+esc(a.patient_phone)+'">חיוג</a>' +
+        '<a class="tel" style="margin-inline-start:8px;font-size:14px" href="https://wa.me/972'+
+          esc(String(a.patient_phone||'').replace(/^0/,''))+'" target="_blank" rel="noopener">ווטסאפ</a>' +
+      '</span></div>' +
+    '</div>';
+
+  const copyBar = a.status === 'cancelled' ? '' :
+    '<div class="copybar" data-bar="'+a._id+'">' +
+      '<div class="step"></div>' +
+      '<div class="next"></div>' +
+      '<div class="track"></div>' +
+    '</div>';
+
+  return '<div class="card '+st+'" data-card="'+a._id+'">' +
+    '<div class="hd"><span class="when">'+hhmmOf(d)+' · '+a.slot_duration_min+' דק׳</span>' +
+      '<span class="name">'+esc(svcName)+'</span></div>' +
+    fields +
+    (a.patient_note ? '<div class="note">הערת המטופל: '+esc(a.patient_note)+'</div>' : '') +
+    (badges.length ? '<div class="badges">'+badges.join('')+'</div>' : '') +
+    copyBar +
+    checks + '</div>';
+}
+
+/* שם פרטי ומשפחה.
+   הטופס מבקש אותם בשני שדות נפרדים, ולכן הם מגיעים מוכנים.
+   הניחוש לפי רווח נשאר רק כגיבוי לרשומות שנוצרו לפני השינוי —
+   אחרת התור הראשון שנקבע ב-QA היה מאבד את השם. */
+function splitName(a) {
+  if (a && typeof a === 'object') {
+    if (a.patient_first || a.patient_last) {
+      return { first: a.patient_first || '', last: a.patient_last || '' };
+    }
+    a = a.patient_name;
+  }
+  const p = String(a || '').trim().split(/\s+/).filter(Boolean);
+  return { first: p[0] || '', last: p.slice(1).join(' ') };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   6ב. העתקה לאודורו
+   כל שדה מועתק בנפרד, בסדר קבוע, כדי שאפשר יהיה להדביק אותו
+   בשדה המתאים באודורו ב-Ctrl+V בלי לערוך כלום ובלי טעויות הקלדה.
+   ══════════════════════════════════════════════════════════════════ */
+async function copyText(t) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(t); return true;
+    }
+  } catch (e) {}
+  // גיבוי לדפדפנים/הקשרים שבהם ה-API החדש חסום (למשל פתיחה מקובץ מקומי)
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.setAttribute('readonly','');
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
+
+function odoroFields(a) {
+  const n = splitName(a);
+  return [
+    { k: 'שם פרטי',   v: n.first },
+    { k: 'שם משפחה',  v: n.last },
+    { k: 'מספר זהות', v: a.patient_id_number },
+    { k: 'נייד',      v: a.patient_phone }
+  ].filter(f => f.v);          // מדלג על שדות ריקים, למשל מטופל בלי ת"ז
+}
+
+/* ── בניית קישור וואטסאפ עם הודעה מוכנה ──────────────────────────
+   שום הודעה לא נשלחת מכאן. הקישור רק פותח את השיחה עם הטקסט מוכן,
+   והשליחה נשארת פעולה אנושית — בדיוק כפי שהוגדר באיפיון. */
+function waLink(a, kind) {
+  const tpl = WA[kind] || '';
+  const d   = dateOf(a);
+  const n   = splitName(a);
+  const pay = CFG.paymentLink ? CFG.paymentLink + '\n\n' : '';
+  const who = CFG.clinicVoice;   // אחיד לכל מי שמחובר — ראו ההסבר ב-CFG
+
+  const text = tpl
+    .replace(/\{שם\}/g,    n.first || '')
+    .replace(/\{תאריך\}/g, 'יום ' + DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1))
+    .replace(/\{שעה\}/g,   hhmmOf(d))
+    .replace(/\{נושא\}/g,  CFG.serviceNames[a.service_code] || '')
+    .replace(/\{תשלום\}/g, pay)
+    .replace(/\{שולח\}/g,  who)
+    .replace(/\n{3,}/g, '\n\n');   // מנקה שורות ריקות מיותרות אם קישור התשלום חסר
+
+  const phone = '972' + String(a.patient_phone || '').replace(/\D/g,'').replace(/^0/,'');
+  return 'https://wa.me/' + phone + '?text=' + encodeURIComponent(text);
+}
+
+const copyStep = {};   // מזהה תור → באיזה שדה אנחנו עומדים
+
+function paintCopyBar(id) {
+  const a = appts.find(x => x._id === id);
+  const bar = document.querySelector('[data-bar="'+id+'"]');
+  if (!a || !bar) return;
+  const list = odoroFields(a);
+  const i = copyStep[id] || 0;
+  bar.classList.add('on');
+
+  if (i >= list.length) {
+    bar.querySelector('.step').textContent = '';
+    bar.querySelector('.next').innerHTML =
+      '<span class="done">✓ כל השדות הועתקו</span>' +
+      '<button class="ghost" data-copyact="restart" data-id="'+id+'">התחל מחדש</button>' +
+      '<button class="ghost" data-copyact="close" data-id="'+id+'">סגור</button>';
+  } else {
+    const f = list[i];
+    bar.querySelector('.step').textContent =
+      'שדה ' + (i+1) + ' מתוך ' + list.length + ' — העתיקו, הדביקו באודורו, והמשיכו';
+    bar.querySelector('.next').innerHTML =
+      '<span class="k" style="color:var(--muted);font-size:14px">' + esc(f.k) + ':</span>' +
+      '<span class="nextval">' + esc(f.v) + '</span>' +
+      '<button data-copyact="copy" data-id="'+id+'">העתק והמשך</button>' +
+      '<button class="ghost" data-copyact="close" data-id="'+id+'">סגור</button>';
+  }
+  bar.querySelector('.track').innerHTML =
+    list.map((f,k) => '<i class="'+(k<i?'ok':(k===i?'cur':''))+'"></i>').join('');
+
+  /* הכפתורים כאן נוצרים מחדש בכל ציור של הסרגל, ולכן חייבים לחבר להם
+     מאזין כאן ולא ב-wire() — שרץ פעם אחת לפני שהסרגל בכלל קיים. */
+  bar.querySelectorAll('[data-copyact]').forEach(b => {
+    b.onclick = () => copyAct(b.dataset.copyact, b.dataset.id);
+  });
+}
+
+async function copyAct(act, id) {
+  const a = appts.find(x => x._id === id);
+  if (!a) return;
+  const list = odoroFields(a);
+  if (act === 'close')   { copyStep[id] = 0; const b = document.querySelector('[data-bar="'+id+'"]'); if (b) b.classList.remove('on'); return; }
+  if (act === 'restart') { copyStep[id] = 0; paintCopyBar(id); return; }
+  if (act === 'open')    { copyStep[id] = 0; paintCopyBar(id); return; }
+  if (act === 'copy') {
+    const i = copyStep[id] || 0;
+    const f = list[i];
+    if (!f) return;
+    const ok = await copyText(f.v);
+    toast(ok ? ('הועתק — ' + f.k + ': ' + f.v) : 'ההעתקה נכשלה');
+    copyStep[id] = i + 1;
+    paintCopyBar(id);
+  }
+}
+
+function chk(id, field, label, val) {
+  return '<label class="chk"><input type="checkbox" data-id="'+id+'" data-f="'+field+'"'+
+    (val?' checked':'')+'><span>'+esc(label)+
+    (val?'<span class="stamp">'+esc(fmtStamp(val))+'</span>':'')+'</span></label>';
+}
+
+function wire(host) {
+  host.querySelectorAll('.chk input').forEach(el => {
+    el.onchange = () => setFlag(el.dataset.id, el.dataset.f, el.checked);
+  });
+  host.querySelectorAll('[data-act]').forEach(b => {
+    const a = appts.find(x => x._id === b.dataset.id);
+    if (!a) return;
+    b.onclick = () => ({ cancel:cancelAppt, revive:reviveAppt, follow:openManual,
+                         odoro:(x)=>copyAct('open', x._id) }[b.dataset.act])(a);
+  });
+  // לחיצה על ערך בודד מעתיקה רק אותו
+  host.querySelectorAll('.v[data-copy]').forEach(el => {
+    el.onclick = async () => {
+      const ok = await copyText(el.dataset.copy);
+      if (ok) { el.classList.add('copied'); setTimeout(()=>el.classList.remove('copied'), 900); }
+      toast(ok ? 'הועתק: ' + el.dataset.copy : 'ההעתקה נכשלה');
+    };
+  });
+  host.querySelectorAll('[data-copyact]').forEach(b => {
+    b.onclick = () => copyAct(b.dataset.copyact, b.dataset.id);
+  });
+  // שמירת מצב סרגל ההעתקה בין רינדורים (למשל כשמגיע עדכון realtime)
+  Object.keys(copyStep).forEach(id => {
+    if (copyStep[id] > 0 && host.querySelector('[data-bar="'+id+'"]')) paintCopyBar(id);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   7. תור ידני / תור המשך
+   כשמגיעים מכרטיס קיים — פרטי המטופל מועתקים אוטומטית, בלי הקלדה.
+   ══════════════════════════════════════════════════════════════════ */
+function openManual(from, preset) {
+  const pick = { date: (preset && preset.date) || isoOf(state.day),
+                 time: (preset && preset.time) || null,
+                 duration: 20 };
+  const host = $('modalHost');
+
+  host.innerHTML =
+  '<div class="modal"><div class="sheet">' +
+    '<h2>'+(from ? 'תור המשך' : 'הוספת תור ידנית')+'</h2>' +
+    '<div class="sub">'+(from ? 'הפרטים הועתקו מ'+esc(from.patient_name)
+                              : 'התור ייפתח במצב מטופל — הצוות כבר סגר את הפרטים')+'</div>' +
+    '<div class="row">' +
+      '<div><label>שם פרטי</label><input id="mFirst" value="'+esc(from?splitName(from).first:'')+'">' +
+        '<div class="err" id="eFirst">נא למלא שם פרטי</div></div>' +
+      '<div><label>שם משפחה</label><input id="mLast" value="'+esc(from?splitName(from).last:'')+'">' +
+        '<div class="err" id="eLast">נא למלא שם משפחה</div></div>' +
+    '</div>' +
+    '<label>מספר נייד</label><input id="mPhone" inputmode="numeric" value="'+esc(from?from.patient_phone:'')+'">' +
+    '<div class="err" id="ePhone">מספר נייד לא תקין</div>' +
+    '<label>מספר זהות (לא חובה)</label><input id="mId" inputmode="numeric" value="'+esc(from&&from.patient_id_number?from.patient_id_number:'')+'">' +
+    '<label>סוג הביקור</label><select id="mDur">' +
+      Object.entries(CFG.durations).map(([m,n]) =>
+        '<option value="'+m+'"'+(String(m)===String(pick.duration)?' selected':'')+'>'+esc(n)+' · '+m+' דק׳</option>').join('') +
+    '</select>' +
+    '<label>תאריך</label><input id="mDate" type="date" value="'+pick.date+'">' +
+    '<label>שעה פנויה</label><div class="slotpick" id="mSlots"></div>' +
+    '<div class="err" id="eSlot">נא לבחור שעה</div>' +
+    '<label>הערה (לא חובה)</label><textarea id="mNote"></textarea>' +
+    '<button class="go" id="mSave">שמור תור</button>' +
+    '<button class="cancel" id="mCancel">ביטול</button>' +
+  '</div></div>';
+
+  const close = () => { host.innerHTML = ''; };
+  $('mCancel').onclick = close;
+  host.querySelector('.modal').onclick = (e) => { if (e.target.classList.contains('modal')) close(); };
+
+  const paintSlots = () => {
+    pick.duration = +$('mDur').value;
+    pick.date = $('mDate').value;
+    pick.time = null;
+    const box = $('mSlots');
+    const [y,mo,dd] = pick.date.split('-').map(Number);
+    const day = new Date(y, mo-1, dd);
+    const w = CFG.hours[day.getDay()];
+
+    if (!w) { box.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:15px">'+
+      'יום זה סגור בלוז הקבוע. אפשר בכל זאת לבחור שעה — ראו הערה למטה.</div>'; }
+
+    // תפוסה נגזרת מהתורים שכבר טעונים למסך — מספיק להצגה,
+    // והנעילה עצמה נבדקת שוב בטרנזקציה בעת השמירה.
+    const busy = new Set();
+    appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === pick.date)
+         .forEach(a => unitsOf(a).forEach(u => busy.add(u)));
+
+    const openM  = w ? toMin(w.open)  : toMin('08:00');
+    const closeM = w ? toMin(w.close) : toMin('20:00');
+    let html = '';
+    for (let m = openM; m + pick.duration <= closeM; ) {
+      let fits = true;
+      for (let k = 0; k < pick.duration/CFG.baseGridMin; k++) {
+        const u = m + k*CFG.baseGridMin;
+        if (busy.has(pad(Math.floor(u/60))+pad(u%60))) { fits = false; break; }
+      }
+      if (fits) { html += '<button data-t="'+pad(Math.floor(m/60))+':'+pad(m%60)+'">'+
+                          pad(Math.floor(m/60))+':'+pad(m%60)+'</button>'; m += pick.duration; }
+      else m += CFG.baseGridMin;
+    }
+    box.innerHTML = html || '<div style="grid-column:1/-1;color:var(--muted);font-size:15px">אין שעות פנויות ביום זה</div>';
+    box.querySelectorAll('[data-t]').forEach(b => {
+      if (pick.time && b.dataset.t === pick.time) b.classList.add('on');
+      b.onclick = () => {
+        pick.time = b.dataset.t;
+        box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      };
+    });
+    // אם השעה שנבחרה מהיומן כבר לא זמינה במשך שנבחר — מנקים אותה
+    if (pick.time && !box.querySelector('[data-t="'+pick.time+'"]')) pick.time = null;
+  };
+  $('mDur').onchange = paintSlots;
+  $('mDate').onchange = paintSlots;
+  paintSlots();
+  window.__manualRepaint = paintSlots;   // לבדיקות
+
+  $('mSave').onclick = async () => {
+    const first = $('mFirst').value.trim();
+    const last  = $('mLast').value.trim();
+    const phone = $('mPhone').value.replace(/\D/g,'');
+    const idnum = $('mId').value.replace(/\D/g,'');
+    let bad = false;
+    const mark = (id,on) => { $(id).classList.toggle('on',on); if(on) bad = true; };
+    mark('eFirst', first.length < 2);
+    mark('eLast',  last.length  < 2);
+    mark('ePhone', !/^05\d{8}$/.test(phone));
+    mark('eSlot',  !pick.time);
+    if (bad) return;
+
+    const [y,mo,dd] = pick.date.split('-').map(Number);
+    const [h,mi]    = pick.time.split(':').map(Number);
+    const when = new Date(y, mo-1, dd, h, mi, 0, 0);
+
+    const btn = $('mSave'); btn.disabled = true; btn.textContent = 'שומר…';
+    const res = await createManual({
+      first, last, phone, idnum: idnum ? idnum.padStart(9,'0') : '',
+      note: $('mNote').value.trim(), duration: pick.duration, when,
+      serviceCode: pick.duration === 30 ? 'D' : (pick.duration === 20 ? 'R' : 'P')
+    });
+    btn.disabled = false; btn.textContent = 'שמור תור';
+
+    if (res.ok) { close(); toast(TXT.saved); }
+    else { toast(res.taken ? TXT.noSlot : 'השמירה נכשלה'); paintSlots(); }
+  };
+}
+
+/* נקודת אחיזה לבדיקות אוטומטיות ולאיתור תקלות מהקונסול. */
+window.HollandStaff = { CFG, TXT, state, statusOf, unitsOf, visible, render,
+                        cardHtml, openManual, isoOf, hhmmOf, splitName,
+                        odoroFields, copyAct, copyStep, wire, waLink, WA,
+                        setAppts: (x) => { appts = x; } };
+</script>
+</body>
+</html>
