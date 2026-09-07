@@ -490,7 +490,45 @@ onAuthStateChanged(auth, (user) => {
   $('whoami').textContent = user.email;
   loadSchedule().then(render);
   subscribe();
+  handleMarkParam();
 });
+
+/* ── ?mark=<id> — הגעה מהמייל ─────────────────────────────────────
+   הכפתור "סמן שנשלחה" במייל פותח את המסך עם הפרמטר הזה. הסימון
+   נעשה כאן ולא במייל, כי רק כאן יש הזדהות — ורק משתמש מזוהה
+   רשאי לשנות תור. ראו firestore.rules.
+   ─────────────────────────────────────────────────────────────── */
+let pendingMark = null;
+function handleMarkParam() {
+  const id = new URLSearchParams(location.search).get('mark');
+  if (!id) return;
+  pendingMark = id;
+  history.replaceState(null, '', location.pathname);   // שלא יסומן שוב ברענון
+}
+function applyPendingMark() {
+  if (!pendingMark) return;
+  const a = appts.find(x => x._id === pendingMark);
+  if (!a) return;                       // עוד לא נטען — ננסה בעדכון הבא
+  const id = pendingMark; pendingMark = null;
+  if (a.flags && a.flags.contacted_at) {
+    toast('התור כבר מסומן כטופל');
+  } else {
+    setFlag(id, 'contacted_at', true);
+    toast('סומן שנשלחה הודעה ראשונה');
+  }
+  state.tab = 'todo'; state.search = '';
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'todo'));
+  render();
+  setTimeout(() => {
+    const el = document.querySelector('[data-card="'+id+'"]');
+    if (!el) return;
+    // הדגשה וגלילה הן נוחות בלבד — לא נותנים להן להפיל את הסימון
+    try { el.scrollIntoView({ block:'center', behavior:'smooth' }); } catch (e) {}
+    el.style.outline = '3px solid var(--navy)';
+    el.style.outlineOffset = '2px';
+    setTimeout(() => { el.style.outline = ''; }, 4000);
+  }, 100);
+}
 
 /* ══════════════════════════════════════════════════════════════════
    4. נתונים בזמן אמת
@@ -523,6 +561,7 @@ function subscribe() {
         .filter(a => { const t = dateOf(a); return t instanceof Date && !isNaN(t) && t >= from; })
         .sort((x,y) => dateOf(x) - dateOf(y));
       render();
+      applyPendingMark();
     },
     (err) => {
       console.error(err);
@@ -1087,9 +1126,13 @@ function cardHtml(a) {
       whatsapp:'ווטסאפ',direct:'ישיר',referral:'הפניה',other_campaign:'קמפיין'}[a.lead_source]||a.lead_source)+'</span>');
 
   let checks = '';
+  /* לחיצה על "הודעה ראשונה" מסמנת גם את הצ'קבוקס.
+     בלי זה, מי ששולח ושוכח לסמן מקבל תור שנשאר כתום לנצח —
+     והטיימר של השעתיים, שנספר מרגע הסימון, לא מתחיל בכלל. */
   const wa = (kind, label, cls) =>
-    '<a class="wabtn'+(cls?' '+cls:'')+'" href="'+waLink(a, kind)+'" target="_blank" rel="noopener">'+
-    esc(label)+'</a>';
+    '<a class="wabtn'+(cls?' '+cls:'')+'" href="'+waLink(a, kind)+'"' +
+    (kind === 'first' ? ' data-mark="'+a._id+'"' : '') +
+    ' target="_blank" rel="noopener">' + esc(label) + '</a>';
 
   if (a.status === 'cancelled') {
     checks = '<div class="acts">' +
@@ -1304,6 +1347,15 @@ function wire(host) {
   });
   host.querySelectorAll('[data-copyact]').forEach(b => {
     b.onclick = () => copyAct(b.dataset.copyact, b.dataset.id);
+  });
+  host.querySelectorAll('[data-mark]').forEach(el => {
+    el.addEventListener('click', () => {
+      const a = appts.find(x => x._id === el.dataset.mark);
+      if (a && !(a.flags && a.flags.contacted_at)) {
+        setFlag(el.dataset.mark, 'contacted_at', true);
+        toast('סומן שנשלחה הודעה ראשונה — ניתן לבטל בצ׳קבוקס');
+      }
+    });
   });
   // שמירת מצב סרגל ההעתקה בין רינדורים (למשל כשמגיע עדכון realtime)
   Object.keys(copyStep).forEach(id => {
