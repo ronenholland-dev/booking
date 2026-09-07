@@ -407,6 +407,19 @@ const CONFIG = {
     appId:             '1:215347674704:web:cc8b50f93c34c8d6859b55'
   },
 
+  /* ── App Check ────────────────────────────────────────────────────
+     מפתח האתר של reCAPTCHA Enterprise. מוכיח ל-Firestore שמאחורי
+     הבקשה יושב דפדפן אמיתי ולא סקריפט — מה שחוקי האבטחה לבדם לא
+     יכולים לבדוק, כי תור מזויף נראה בדיוק כמו תור אמיתי.
+
+     המפתח הזה אינו סוד. הוא גלוי בקוד של כל אתר שמשתמש ב-reCAPTCHA,
+     וזה תקין — הוא קשור לרשימת דומיינים מאושרת, ולכן חסר ערך במקום אחר.
+     הסוד הוא המפתח השני (secret key), והוא יושב אצל גוגל בלבד.
+
+     המטופל לא רואה כלום: אין חידה ואין תיבת סימון. הציון מחושב ברקע.
+     ריק = מכובה. ─────────────────────────────────────────────────── */
+  appCheckKey: '6LceMa8tAAAAAIf6It6jVqo6eKwDCZAhO0JkE543',
+
   holdMinutes: 15   // כמה זמן סלוט שמור למטופל בזמן מילוי הטופס
 };
 
@@ -733,8 +746,27 @@ const Store = (() => {
     if (ready) return ready;
     ready = (async () => {
       const appMod = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+      const app = appMod.initializeApp(CONFIG.firebase);
+
+      /* App Check — חייב לרוץ לפני הפנייה הראשונה ל-Firestore, אחרת
+         הבקשות יוצאות בלי אסימון. נכשל בשקט: אם reCAPTCHA לא נטען
+         (רשת איטית, חוסם פרסומות), עדיף שהמטופל יקבע תור מאשר
+         שהמסך ייתקע. במצב Monitor ממילא שום דבר לא נחסם. */
+      if (CONFIG.appCheckKey) {
+        try {
+          const ac = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js');
+          ac.initializeAppCheck(app, {
+            provider: new ac.ReCaptchaEnterpriseProvider(CONFIG.appCheckKey),
+            isTokenAutoRefreshEnabled: true
+          });
+          Debug.log('app check ready');
+        } catch (e) {
+          Debug.log('app check לא נטען', String(e && e.message || e));
+        }
+      }
+
       fs = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
-      db = fs.getFirestore(appMod.initializeApp(CONFIG.firebase));
+      db = fs.getFirestore(app);
       Debug.log('firestore connected', CONFIG.firebase.projectId);
       return db;
     })();

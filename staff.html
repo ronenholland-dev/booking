@@ -310,6 +310,8 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
 import { getFirestore, collection, query, where, orderBy, limit, onSnapshot,
          doc, getDoc, getDocs, setDoc, deleteDoc, runTransaction, Timestamp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js';
 
 /* ══════════════════════════════════════════════════════════════════
    1. הגדרות — להעתיק את אותם ערכים כמו ב-booking.html
@@ -322,6 +324,10 @@ const FIREBASE = {
   messagingSenderId: '215347674704',
   appId:             '1:215347674704:web:cc8b50f93c34c8d6859b55'
 };
+
+/* מפתח האתר של reCAPTCHA Enterprise — אותו ערך בדיוק כמו ב-index.html.
+   אינו סוד: הוא קשור לרשימת דומיינים מאושרת. ריק = App Check מכובה. */
+const APP_CHECK_KEY = '6LceMa8tAAAAAIf6It6jVqo6eKwDCZAhO0JkE543';
 
 const CFG = {
   /* קישור קבוע לתשלום מקדמה (INVOICE4U). נכנס לכל מקום שבו כתוב
@@ -413,6 +419,21 @@ if (!FIREBASE.apiKey) {
 }
 
 const app  = initializeApp(FIREBASE);
+
+/* App Check — לפני getAuth ו-getFirestore, אחרת הבקשות הראשונות
+   יוצאות בלי אסימון. נכשל בשקט כדי שתקלה ב-reCAPTCHA לא תנעל את
+   עתליה מחוץ ליומן באמצע יום עבודה. */
+if (APP_CHECK_KEY) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(APP_CHECK_KEY),
+      isTokenAutoRefreshEnabled: true
+    });
+  } catch (e) {
+    console.warn('App Check לא נטען:', e);
+  }
+}
+
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
