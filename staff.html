@@ -144,6 +144,14 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .chk input{width:19px;height:19px;margin:2px 0 0;flex:none;accent-color:var(--sage);cursor:pointer}
 .chk .stamp{display:block;font-size:12.5px;color:var(--muted);margin-top:1px}
 .chk.danger{color:var(--red)}
+/* אירוע שכבר קרה — תיעוד, לא תיבה שאפשר לכבות בטעות */
+.done{display:flex;align-items:flex-start;gap:9px;padding:6px 0;font-size:15px}
+.done .tick{flex:none;width:19px;margin-top:1px;color:#1c7d45;font-size:16px;line-height:1.2}
+.done .txt{flex:1}
+.done .stamp{display:block;font-size:12.5px;color:var(--muted);margin-top:1px}
+.done .undo{flex:none;background:none;border:none;padding:2px 4px;cursor:pointer;
+  color:var(--muted);font:400 12.5px inherit;text-decoration:underline;opacity:.65}
+.done .undo:hover{opacity:1;color:var(--red)}
 .acts{display:flex;gap:9px;margin-top:11px;flex-wrap:wrap}
 .acts button{background:#fff;border:1px solid var(--navy);color:var(--navy);
   border-radius:8px;padding:9px 14px;font:500 14px inherit;cursor:pointer}
@@ -432,8 +440,10 @@ function cancelWaKind(a) {
 }
 
 const TXT = {
-  cb1: 'נשלחה הודעה ראשונה עם קישור לתשלום',
-  cb2: 'המטופל שילם + התור הועתק לאודורו',
+  cb1: 'הודעה ראשונה עם בקשת מקדמה',
+  cb2: 'שילם + התור הועתק לאודורו',
+  booked: 'התור נקבע',
+  bookedManual: 'התור הוזן ידנית',
   cb3: 'ביטול תור',
   cbManual: 'התור הועתק לאודורו',
   cancelWarn: 'לבטל את התור?\n\nהסלוט ישתחרר לקביעה, והתור יעבור לרשימת המבוטלים.\nאת הודעת הביטול למטופל יש לשלוח ידנית בווטסאפ.',
@@ -441,7 +451,9 @@ const TXT = {
   noSlot: 'הסלוט כבר נתפס. יש לקבוע מועד אחר.',
   saved: 'נשמר',
   cancelled: 'התור בוטל והסלוט שוחרר',
-  revived: 'התור הוחזר ליומן'
+  revived: 'התור הוחזר ליומן',
+  undoWarn: 'לבטל את הסימון?\n\nהסימון מתעד פעולה שכבר בוצעה, ולכן הוא ננעל.\nבטלו אותו רק אם סומן בטעות.',
+  undone: 'הסימון בוטל'
 };
 
 /* ══════════════════════════════════════════════════════════════════
@@ -517,9 +529,13 @@ function statusOf(a) {
   return 'orange';
 }
 
+/* תאריך ושעה מלאים: 08/09/26 · 14:35.
+   שנה דו-ספרתית ושעון 24 — קצר מספיק לשורה בכרטיס, ומדויק מספיק
+   כדי לשחזר מה קרה מתי בלי לנחש. */
 const fmtStamp = (v) => {
   const d = stampOf(v); if (!d) return '';
-  return 'סומן ' + d.getDate()+'.'+(d.getMonth()+1)+' ב-'+hhmmOf(d);
+  return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + '/' +
+         pad(d.getFullYear() % 100) + ' · ' + hhmmOf(d);
 };
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1238,6 +1254,15 @@ function cardHtml(a) {
     badges.push('<span class="badge">מקור: '+esc({google_ads:'גוגל אדס',organic:'אורגני',
       whatsapp:'ווטסאפ',direct:'ישיר',referral:'הפניה',other_campaign:'קמפיין'}[a.lead_source]||a.lead_source)+'</span>');
 
+  /* ── ציר הזמן של התור ──────────────────────────────────────────
+     השורה הראשונה היא תמיד מתי התור נקבע. היא לא צ'קבוקס ואין לה
+     "ביטול סימון" — אף אחד לא סימן אותה, היא פשוט קרתה.
+     יחד עם שתי השורות שאחריה מתקבל תיעוד מלא: מתי נקבע, מתי
+     נשלחה בקשת המקדמה, ומתי שולמה והתור הועתק. ──────────────── */
+  const booked = a.created_at
+    ? doneRow(manual ? TXT.bookedManual : TXT.booked, a.created_at)
+    : '';
+
   let checks = '';
   /* לחיצה על "הודעה ראשונה" מסמנת גם את הצ'קבוקס.
      בלי זה, מי ששולח ושוכח לסמן מקבל תור שנשאר כתום לנצח —
@@ -1251,17 +1276,21 @@ function cardHtml(a) {
     if (a.cancel_reason)
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
     // הנוסח נבחר לפי סיבת הביטול — ראו cancelWaKind
-    checks = '<div class="acts">' +
+    checks = (booked ? '<div class="checks">' + booked +
+        (a.status_changed_at ? doneRow('התור בוטל', a.status_changed_at) : '') +
+      '</div>' : '') +
+      '<div class="acts">' +
       wa(cancelWaKind(a),'💬 שלח הודעת ביטול','go') +
       '<button data-act="revive" data-id="'+a._id+'">החזרה ליומן</button></div>';
   } else if (manual) {
-    checks = '<div class="checks">' + chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
+    checks = '<div class="checks">' + booked +
+        chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
         '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>' +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
   } else {
-    checks = '<div class="checks">' +
+    checks = '<div class="checks">' + booked +
         chk(a._id,'contacted_at',TXT.cb1,f.contacted_at) +
         chk(a._id,'paid_entered_at',TXT.cb2,f.paid_entered_at) +
       '</div><div class="acts">' +
@@ -1437,15 +1466,46 @@ async function copyAct(act, id) {
   }
 }
 
+/* ── צ'קבוקס שהופך לתיעוד ──────────────────────────────────────────
+   כל עוד האירוע לא קרה — תיבת סימון. ברגע שסומן, האירוע התחולל
+   בעולם האמיתי: הודעה נשלחה, כסף שולם, תור הועתק לאודורו. אי אפשר
+   "לבטל" אותו בלחיצה, ולכן התיבה נעלמת ובמקומה נשאר תיעוד עם שעה.
+
+   למה בכל זאת יש "ביטול סימון":
+     סימון בטעות הוא תרחיש אמיתי, והנזק שלו גדול מהנזק של ביטול
+     בטעות — תור שמסומן "שולם" בלי ששולם ייכנס לאודורו וייתפס
+     כסגור. לכן יש דרך חזרה, אבל היא קטנה, לא מזמינה, ודורשת אישור.
+   ──────────────────────────────────────────────────────────────── */
 function chk(id, field, label, val) {
-  return '<label class="chk"><input type="checkbox" data-id="'+id+'" data-f="'+field+'"'+
-    (val?' checked':'')+'><span>'+esc(label)+
-    (val?'<span class="stamp">'+esc(fmtStamp(val))+'</span>':'')+'</span></label>';
+  if (val) return doneRow(label, val, id, field);
+  return '<label class="chk"><input type="checkbox" data-id="'+id+'" data-f="'+field+'">' +
+    '<span>'+esc(label)+'</span></label>';
+}
+
+/* שורת אירוע שהתרחש. בלי field — אין כפתור ביטול, כי יש אירועים
+   שלא הצוות סימן ואי אפשר "לבטל" אותם: קביעת התור עצמה. */
+function doneRow(label, val, id, field) {
+  return '<div class="done">' +
+      '<span class="tick">✓</span>' +
+      '<span class="txt">'+esc(label) +
+        '<span class="stamp">'+esc(fmtStamp(val))+'</span></span>' +
+      (field ? '<button class="undo" data-undo="'+field+'" data-id="'+id+'" ' +
+               'title="לביטול סימון שנעשה בטעות">ביטול סימון</button>' : '') +
+    '</div>';
 }
 
 function wire(host) {
   host.querySelectorAll('.chk input').forEach(el => {
     el.onchange = () => setFlag(el.dataset.id, el.dataset.f, el.checked);
+  });
+  /* ביטול סימון — רק אחרי אישור מפורש. לחיצה בודדת לא מספיקה
+     כדי לבטל אירוע שכבר קרה, וזו בדיוק התקלה שהתיקון הזה נועד למנוע. */
+  host.querySelectorAll('[data-undo]').forEach(b => {
+    b.onclick = () => {
+      if (!confirm(TXT.undoWarn)) return;
+      setFlag(b.dataset.id, b.dataset.undo, false);
+      toast(TXT.undone);
+    };
   });
   host.querySelectorAll('[data-act]').forEach(b => {
     const a = appts.find(x => x._id === b.dataset.id);
@@ -1469,7 +1529,7 @@ function wire(host) {
       const a = appts.find(x => x._id === el.dataset.mark);
       if (a && !(a.flags && a.flags.contacted_at)) {
         setFlag(el.dataset.mark, 'contacted_at', true);
-        toast('סומן שנשלחה הודעה ראשונה — ניתן לבטל בצ׳קבוקס');
+        toast('סומן שנשלחה הודעה ראשונה — לביטול, "ביטול סימון" בכרטיס');
       }
     });
   });
