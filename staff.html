@@ -152,6 +152,18 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .done .undo{flex:none;background:none;border:none;padding:2px 4px;cursor:pointer;
   color:var(--muted);font:400 12.5px inherit;text-decoration:underline;opacity:.65}
 .done .undo:hover{opacity:1;color:var(--red)}
+/* תזכורת העלאת ההמרות — בולטת מספיק כדי לא להתפספס, שקטה מספיק
+   כדי לא להיראות כמו שגיאה. */
+.adsbar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+  margin:0 0 14px;padding:12px 15px;border-radius:10px;
+  background:#fff8e8;border:1px solid #e8d5a3}
+.adsbar.hidden{display:none}
+.adsbar .txt{flex:1;min-width:190px;font-size:14.5px;line-height:1.5}
+.adsbar .txt b{display:block;font-size:15px;margin-bottom:2px}
+.adsbar .txt span{color:var(--muted)}
+.adsbar button{background:var(--navy);color:#fff;border:1px solid var(--navy);
+  border-radius:8px;padding:9px 15px;font:600 14px inherit;cursor:pointer}
+.adsbar button.ghost{background:#fff;color:var(--muted);border-color:#ddd;font-weight:400}
 .acts{display:flex;gap:9px;margin-top:11px;flex-wrap:wrap}
 .acts button{background:#fff;border:1px solid var(--navy);color:var(--navy);
   border-radius:8px;padding:9px 14px;font:500 14px inherit;cursor:pointer}
@@ -303,6 +315,13 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
         <button id="dPrev">›</button><div class="lbl" id="dLbl"></div><button id="dNext">‹</button>
       </div>
       <button class="btn-add" id="addBtn">+ תור ידני</button>
+    </div>
+    <!-- תזכורת העלאת ההמרות לגוגל אדס. מוצגת רק לרוני, ורק כשיש
+         מה להעלות — ראו paintAdsBanner. -->
+    <div id="adsBanner" class="adsbar hidden">
+      <div class="txt"><b id="adsTitle"></b><span id="adsSub"></span></div>
+      <button id="adsExport">ייצוא קובץ להעלאה</button>
+      <button id="adsLater" class="ghost" title="ההתראה תחזור מחר">לא עכשיו</button>
     </div>
     <div class="list" id="list"></div>
   </div>
@@ -847,6 +866,14 @@ $('dPrev').onclick = () => shiftDay(-1);
 $('dNext').onclick = () => shiftDay(1);
 $('addBtn').onclick = () => openManual(null);
 
+$('adsExport').onclick = () => adsExport();
+/* "לא עכשיו" דוחה ליום אחד בלבד. משימה שנדחית לשבוע נשכחת. */
+$('adsLater').onclick = () => {
+  lsSet(ADS_SNOOZE_KEY, Date.now() + 86400000);
+  $('adsBanner').classList.add('hidden');
+  toast('התזכורת תחזור מחר');
+};
+
 function visible() {
   let list = appts.slice();
   if (state.search) {
@@ -870,6 +897,7 @@ function render() {
   $('nCanc').textContent = appts.filter(a => a.status === 'cancelled').length;
   const d = state.day;
   $('dLbl').textContent = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
+  paintAdsBanner();
 
   // לשונית היומן: לוח חודשי + כל היום, פנויים ותפוסים כאחד
   if (state.tab === 'settings') { renderSettings(); return; }
@@ -1476,6 +1504,159 @@ async function copyAct(act, id) {
      בטעות — תור שמסומן "שולם" בלי ששולם ייכנס לאודורו וייתפס
      כסגור. לכן יש דרך חזרה, אבל היא קטנה, לא מזמינה, ודורשת אישור.
    ──────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+   6ג. המרות אופליין לגוגל אדס
+
+   מה הבעיה שזה פותר:
+     גוגל יודעת מי לחץ על המודעה וקבע תור. היא לא יודעת מי מהם
+     באמת שילם והגיע — וזה בדיוק ההבדל בין קמפיין טוב לקמפיין
+     שנראה טוב. בלי הנתון הזה, האלגוריתם מייעל למי שלוחץ "קבע תור",
+     ולא למי שהופך למטופל.
+
+   מה נשלח:
+     gclid — מזהה קליק אנונימי שגוגל עצמה יצרה. אין בו שום פרט על
+     המטופל, ולכן אין כאן דליפה של מידע רפואי. זו הסיבה שנבחרה
+     השיטה הזו ולא Enhanced Conversions, ששולחת טלפון ומייל מגובבים.
+
+   ⚠️ הקובץ הזה מכיל אך ורק gclid, מועד וערך. אין בו שם, טלפון,
+      ת"ז או סוג טיפול — גם לא בעקיפין דרך הערך: יש שתי רמות ערך
+      בלבד, חדש וביקורת, ולא ערך לכל תחום.
+   ══════════════════════════════════════════════════════════════════ */
+const ADS = {
+  /* שם פעולת ההמרה בגוגל אדס — חייב להיות זהה בדיוק לשם שהוגדר שם */
+  conversionName: 'Paid Appointment',
+  /* אותם ערכים כמו באפליקציה. ביקור חדש שווה יותר מביקורת. */
+  value: { new: 2000, follow: 600 },
+  currency: 'ILS',
+  /* כל כמה ימים להזכיר */
+  remindEveryDays: 7,
+  /* מי רואה את התזכורת. עתליה לא מעלה המרות לגוגל אדס, ואין סיבה
+     להציג לה משימה שאינה שלה. */
+  owner: 'ronenholland@gmail.com'
+};
+
+const ADS_LAST_KEY   = 'holland_ads_last_v1';    // מתי הועלה בפועל
+const ADS_SNOOZE_KEY = 'holland_ads_snooze_v1';  // עד מתי נדחתה התזכורת
+const lsGet = (k) => { try { return +(localStorage.getItem(k) || 0); } catch (e) { return 0; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, String(v)); } catch (e) {} };
+
+/* גוגל אדס דורשת חותמת עם היסט אזור זמן מפורש. בלי ההיסט היא
+   מפרשת את השעה כשעון החשבון, וההמרה עלולה ליפול לפני הקליק
+   ואז להידחות בשקט. */
+function adsTime(d) {
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const oh = pad(Math.floor(Math.abs(off)/60)), om = pad(Math.abs(off)%60);
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+
+         pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())+
+         ' '+sign+oh+om;
+}
+
+/* תורים שמוכנים להעלאה: הגיעו מקליק בגוגל, שולמו והוזנו לאודורו,
+   ועדיין לא הועלו. תור ידני או אורגני לא ייכנס — אין לו gclid. */
+function adsPending(list) {
+  return (list || appts).filter(a =>
+       a.gclid
+    && !a.offline_uploaded
+    && a.status !== 'cancelled'
+    && a.flags && a.flags.paid_entered_at
+  );
+}
+
+function adsCsv(rows) {
+  const esc2 = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  };
+  const lines = [
+    'Parameters:TimeZone=Asia/Jerusalem',
+    ['Google Click ID','Conversion Name','Conversion Time',
+     'Conversion Value','Conversion Currency'].join(',')
+  ];
+  rows.forEach(a => {
+    lines.push([
+      esc2(a.gclid),
+      esc2(ADS.conversionName),
+      esc2(adsTime(stampOf(a.flags.paid_entered_at))),
+      esc2(ADS.value[a.visit_track] != null ? ADS.value[a.visit_track] : ADS.value.new),
+      esc2(ADS.currency)
+    ].join(','));
+  });
+  return lines.join('\n');
+}
+
+async function adsExport() {
+  const rows = adsPending();
+  if (!rows.length) { toast('אין המרות חדשות להעלאה'); return; }
+
+  const iso = isoOf(new Date());
+  download('holland-conversions-' + iso + '.csv', adsCsv(rows));
+
+  /* הסימון נעשה רק אחרי אישור מפורש, ולא אוטומטית עם ההורדה.
+     אם ההעלאה לגוגל תיכשל והתורים כבר סומנו — הם לא יופיעו שוב
+     לעולם, וההמרות פשוט יאבדו בלי שאף אחד ידע. */
+  if (!confirm('הקובץ ירד — ' + rows.length + ' המרות.\n\n' +
+               'העלה אותו לגוגל אדס, ורק אחרי שההעלאה הצליחה לחץ אישור.\n' +
+               'אישור יסמן את ההמרות כמועלות, והן לא יופיעו שוב.')) {
+    toast('הקובץ ירד. ההמרות לא סומנו — יופיעו שוב בפעם הבאה.');
+    return;
+  }
+  try {
+    for (const a of rows) {
+      await setDoc(doc(db,'appointments',a._id),
+                   { offline_uploaded: true, offline_uploaded_at: Timestamp.now() },
+                   { merge: true });
+    }
+    lsSet(ADS_LAST_KEY, Date.now());
+    lsSet(ADS_SNOOZE_KEY, 0);
+    toast(rows.length + ' המרות סומנו כמועלות');
+    render();
+  } catch (e) { console.error(e); toast('סימון ההמרות נכשל'); }
+}
+
+function download(name, text) {
+  const blob = new Blob(['﻿' + text], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* התזכורת. שלושה תנאים, וכולם חייבים להתקיים:
+     1. המשתמש המחובר הוא רוני — לא עתליה
+     2. יש בפועל המרות שממתינות
+     3. עברו מספיק ימים מאז הפעם האחרונה, או שנצבר מספיק
+   התנאי השני הוא העיקר: תזכורת שמופיעה כשאין מה לעשות איתה
+   הופכת תוך שבועיים לרעש שמדלגים עליו. */
+function paintAdsBanner() {
+  const bar = $('adsBanner');
+  if (!bar) return;
+  const me = auth.currentUser ? (auth.currentUser.email || '') : '';
+  const rows = adsPending();
+
+  const last  = lsGet(ADS_LAST_KEY);
+  const until = lsGet(ADS_SNOOZE_KEY);
+  const days  = (Date.now() - last) / 86400000;
+
+  /* צבירה של 10 המרות גוברת על הדחייה ועל מניין הימים. אם הצטבר
+     כל כך הרבה, השבוע כבר לא רלוונטי — יש כאן נתונים שגוגל
+     לא רואה, וכל יום נוסף הוא יום של תקציב שמתבזבז. */
+  const show = me.toLowerCase() === ADS.owner.toLowerCase()
+            && rows.length > 0
+            && (rows.length >= 10 ||
+                (Date.now() > until && (!last || days >= ADS.remindEveryDays)));
+
+  bar.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  $('adsTitle').textContent =
+    rows.length + ' המרות ממתינות להעלאה לגוגל אדס';
+  $('adsSub').textContent = last
+    ? 'ההעלאה האחרונה: לפני ' + Math.floor(days) + ' ימים'
+    : 'טרם בוצעה העלאה';
+}
+
 function chk(id, field, label, val) {
   if (val) return doneRow(label, val, id, field);
   return '<label class="chk"><input type="checkbox" data-id="'+id+'" data-f="'+field+'">' +
@@ -1692,6 +1873,8 @@ window.HollandStaff = { CFG, TXT, state, statusOf, unitsOf, visible, render,
                         odoroFields, copyAct, copyStep, wire, waLink, WA,
                         windowFor, blockedFor, schedule, renderSettings,
                         cancelAppt, cancelWaKind, CANCEL_REASONS,
+                        ADS, adsPending, adsCsv, adsTime, paintAdsBanner,
+                        ADS_LAST_KEY, ADS_SNOOZE_KEY,
                         setAppts: (x) => { appts = x; } };
 </script>
 </body>

@@ -9,6 +9,26 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap" rel="stylesheet">
 
+<!-- ══════════════════════════════════════════════════════════════════
+     Google Tag Manager — קונטיינר GTM-TW674CWJ
+
+     זה החוליה שהייתה חסרה. מודול Track דוחף אירועים ל-dataLayer,
+     אבל בלי הקוד הזה אף אחד לא קרא אותם: האירועים הצטברו במערך
+     בזיכרון הדפדפן ונמחקו עם סגירת הלשונית.
+
+     ⚠️ הקוד חייב לרוץ לפני האפליקציה, כדי שאירועים מוקדמים
+        (page_view, lead capture) ייתפסו. לכן הוא כאן ב-head.
+
+     ⚠️ שום פרט מזהה לא נדחף ל-dataLayer — לא שם, לא טלפון, לא ת"ז,
+        ולא שם הטיפול. רק service_code. ראו את ההערה במודול Track.
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
+var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';
+j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-TW674CWJ');
+</script>
+
 <!--
 ═══════════════════════════════════════════════════════════════════════
   מרפאת ד"ר רונן הולנד — אפליקציית קביעת תורים
@@ -184,6 +204,10 @@ input.err,textarea.err{border-color:#c0392b}
 </style>
 </head>
 <body>
+<!-- גיבוי ל-GTM כשה-JS חסום. לא מודד כלום מעבר לצפייה בדף,
+     אבל בלעדיו הקונטיינר לא נטען כלל אצל חלק מהמשתמשים. -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TW674CWJ"
+  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 <div class="wrap">
   <div class="hdr">
@@ -578,6 +602,17 @@ const Track = (() => {
   /* אירוע משפך שיכול לחזור עם ערך שונה (למשל בחירת סוג אחר) */
   function stepRepeat(event, extra){ push(event, extra); }
 
+  /* ── פנייה בערוץ אחר ────────────────────────────────────────────
+     מטופל שלוחץ "הודעת ווטסאפ למרפאה" עוזב את האפליקציה ולא יקבע
+     תור דרכה. עד היום הוא נעלם מהמדידה לחלוטין, וקמפיין שמביא
+     דווקא כאלה נראה כמו קמפיין כושל.
+
+     זו אינה המרה ואין לה ערך כספי — זו נקודת יציאה שצריך לדעת
+     שקיימת. אם היא תופיע הרבה, זה סימן שמשהו בזרימה מרתיע. */
+  function contact(channel) {
+    push('contact_click', { contact_channel: channel });
+  }
+
   /* ההמרה הראשית — פעם אחת לכל פנייה, גם אחרי רענון או "אחורה" */
   function conversion(txId, svc) {
     let sent = [];
@@ -596,7 +631,7 @@ const Track = (() => {
     try { sessionStorage.setItem(SENT_KEY, JSON.stringify(sent)); } catch(e){}
   }
 
-  return { step, stepRepeat, conversion };
+  return { step, stepRepeat, conversion, contact };
 })();
 
 
@@ -972,10 +1007,13 @@ function drawVisitType() {
     <button class="btn btn-primary" data-go="RX">${esc(T.s1.prescription)}</button>
     <div class="rule"></div>
     <div class="section-label">${esc(T.s1.contactLabel)}</div>
-    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" style="text-decoration:none">${esc(T.s1.waText)}</a>
-    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" style="text-decoration:none">${esc(T.s1.waVoice)}</a>
+    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" data-contact="whatsapp_text" style="text-decoration:none">${esc(T.s1.waText)}</a>
+    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" data-contact="whatsapp_voice" style="text-decoration:none">${esc(T.s1.waVoice)}</a>
     <div class="note-box">${esc(T.s1.maccabi)}</div>
   `;
+  // יציאה לערוץ אחר — נמדדת לפני שהדפדפן עוזב את הדף
+  $body().querySelectorAll('[data-contact]').forEach(el =>
+    el.addEventListener('click', () => Track.contact(el.dataset.contact)));
   $body().querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
     const v = b.dataset.go;
     if (v === 'new') {
