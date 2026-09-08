@@ -391,13 +391,50 @@ const WA = {
     'שלום {שם}, זו {שולח} מהמרפאה הפרטית של ד"ר הולנד.\n\n' +
     'רצינו לוודא שקיבלת את ההודעה לגבי התור ל{תאריך} בשעה {שעה}.\n' +
     'התור ממתין לך, ונשמר עד לקבלת המקדמה.\n\n' +
-    '{תשלום}'
+    '{תשלום}',
+
+  /* ── ביטול מצד המרפאה ──────────────────────────────────────────
+     נוסח נפרד, ולא במקרה. אם המרפאה מבטלת בגלל שינוי בלו"ז ואנחנו
+     שולחים "לא קיבלנו אישור על תשלום המקדמה" — האשמנו מטופל שלא
+     עשה כלום, ופגענו באמון בלי סיבה. ההתנצלות והיוזמה לתאם מחדש
+     צריכות לבוא מאיתנו. ─────────────────────────────────────── */
+  cancelClinic:
+    'שלום {שם}, זו {שולח} מהמרפאה הפרטית של ד"ר הולנד.\n\n' +
+    'אני מתנצלת, אנחנו נאלצים לבטל את התור שנקבע ל{תאריך} בשעה {שעה} מסיבות שאינן תלויות בך.\n\n' +
+    'אשמח לתאם לך מועד חלופי בהקדם. מתי נוח לך?',
+
+  /* ── המטופל ביקש לבטל ──────────────────────────────────────────
+     אישור קצר ועובדתי. בלי "נשמח לראותך" ובלי שאלות — מי שביקש
+     לבטל לא צריך לנהל שיחה נוספת כדי לסגור את העניין. */
+  cancelPatient:
+    'שלום {שם}, זו {שולח} מהמרפאה הפרטית של ד"ר הולנד.\n\n' +
+    'התור שלך ל{תאריך} בשעה {שעה} בוטל כבקשתך.\n\n' +
+    'נשמח לעמוד לרשותך בעתיד.'
 };
+
+/* ── סיבות ביטול ──────────────────────────────────────────────────
+   הסיבה נשמרת על התור ומופיעה בלשונית "מבוטלים". היא גם קובעת
+   איזה נוסח ווטסאפ ייפתח — ראו cancelWaKind. ────────────────── */
+const CANCEL_REASONS = [
+  { code:'no_reply', label:'לא הגיב / לא שולמה מקדמה', wa:'cancel'        },
+  { code:'patient',  label:'המטופל ביקש לבטל',          wa:'cancelPatient' },
+  { code:'clinic',   label:'ביטול מצד המרפאה',          wa:'cancelClinic'  },
+  { code:'other',    label:'סיבה אחרת',                 wa:''              }
+];
+
+const reasonByCode = (c) => CANCEL_REASONS.find(r => r.code === c) || null;
+
+/* תורים שבוטלו לפני שהיו קודי סיבה — נופלים לנוסח הישן, שהיה
+   הנוסח היחיד שקיים אז ממילא. */
+function cancelWaKind(a) {
+  const r = reasonByCode(a && a.cancel_code);
+  return (r && r.wa) || 'cancel';
+}
 
 const TXT = {
   cb1: 'נשלחה הודעה ראשונה עם קישור לתשלום',
   cb2: 'המטופל שילם + התור הועתק לאודורו',
-  cb3: 'המטופל לא הגיב — ביטול התור',
+  cb3: 'ביטול תור',
   cbManual: 'התור הועתק לאודורו',
   cancelWarn: 'לבטל את התור?\n\nהסלוט ישתחרר לקביעה, והתור יעבור לרשימת המבוטלים.\nאת הודעת הביטול למטופל יש לשלוח ידנית בווטסאפ.',
   reviveWarn: 'להחזיר את התור ליומן?\nהפעולה תתפוס מחדש את הסלוט, אם הוא עדיין פנוי.',
@@ -622,10 +659,58 @@ async function setFlag(id, field, on) {
   } catch (e) { console.error(e); toast('השמירה נכשלה'); }
 }
 
-/* ביטול: משחרר את הסלוט ומעביר לרשימת המבוטלים — שני מסמכים,
+/* ── ביטול תור ─────────────────────────────────────────────────────
+   שני שלבים: בוחרים סיבה, ורק אז מבטלים. הסיבה אינה קישוט —
+   היא נשמרת על התור, מופיעה ברשימת המבוטלים, וקובעת איזה נוסח
+   ווטסאפ ייפתח. בלעדיה כל ביטול נראה כמו "המטופל לא הגיב", גם
+   כשהמרפאה היא שביטלה. ──────────────────────────────────────── */
+function cancelAppt(a) {
+  const host = $('modalHost');
+  const n = splitName(a);
+
+  host.innerHTML =
+  '<div class="modal"><div class="sheet">' +
+    '<h2>ביטול תור</h2>' +
+    '<div class="sub">' + esc([n.first, n.last].filter(Boolean).join(' ')) +
+      ' · ' + esc(hhmmOf(dateOf(a))) + '</div>' +
+    '<label>סיבת הביטול</label>' +
+    '<select id="cReason">' +
+      CANCEL_REASONS.map(r => '<option value="'+r.code+'">'+esc(r.label)+'</option>').join('') +
+    '</select>' +
+    '<div id="cFreeWrap" style="display:none">' +
+      '<label>פירוט</label><input id="cFree" placeholder="מה הסיבה?">' +
+      '<div class="err" id="eFree">נא לפרט את הסיבה</div>' +
+    '</div>' +
+    '<div class="note" style="margin-top:14px">' + esc(TXT.cancelWarn.split('\n\n')[1] || '') + '</div>' +
+    '<button class="go" id="cGo">ביטול התור</button>' +
+    '<button class="cancel" id="cBack">חזרה</button>' +
+  '</div></div>';
+
+  const close = () => { host.innerHTML = ''; };
+  $('cBack').onclick = close;
+  host.querySelector('.modal').onclick = (e) => { if (e.target.classList.contains('modal')) close(); };
+
+  const sel = $('cReason');
+  sel.onchange = () => {
+    $('cFreeWrap').style.display = sel.value === 'other' ? '' : 'none';
+  };
+
+  $('cGo').onclick = async () => {
+    const code = sel.value;
+    const free = $('cFree') ? $('cFree').value.trim() : '';
+    if (code === 'other' && free.length < 2) { $('eFree').classList.add('on'); return; }
+    const label = code === 'other' ? free : reasonByCode(code).label;
+
+    const btn = $('cGo'); btn.disabled = true; btn.textContent = 'מבטל…';
+    const ok = await doCancel(a, code, label);
+    btn.disabled = false; btn.textContent = 'ביטול התור';
+    if (ok) close();
+  };
+}
+
+/* משחרר את הסלוט ומעביר לרשימת המבוטלים — שני מסמכים,
    טרנזקציה אחת, כדי שלא ייווצר מצב ביניים. */
-async function cancelAppt(a) {
-  if (!confirm(TXT.cancelWarn)) return;
+async function doCancel(a, code, label) {
   const dIso = isoOf(dateOf(a)), units = unitsOf(a);
   try {
     await runTransaction(db, async (tx) => {
@@ -639,11 +724,13 @@ async function cancelAppt(a) {
       tx.update(doc(db,'appointments',a._id), {
         status: 'cancelled',
         status_changed_at: Timestamp.now(),
-        cancel_reason: 'לא הגיב / לא שולמה מקדמה'
+        cancel_code: code,
+        cancel_reason: label
       });
     });
     toast(TXT.cancelled);
-  } catch (e) { console.error(e); toast('הביטול נכשל'); }
+    return true;
+  } catch (e) { console.error(e); toast('הביטול נכשל'); return false; }
 }
 
 async function reviveAppt(a) {
@@ -662,7 +749,8 @@ async function reviveAppt(a) {
       units.forEach(k => { next[k] = { a: a._id, e: null }; });
       tx.set(dayRef, { date: dIso, units: next }, { merge: true });
       tx.update(doc(db,'appointments',a._id), {
-        status: 'pending', status_changed_at: Timestamp.now(), cancel_reason: null
+        status: 'pending', status_changed_at: Timestamp.now(),
+        cancel_reason: null, cancel_code: null
       });
     });
     toast(TXT.revived);
@@ -690,7 +778,10 @@ async function createManual(data) {
     patient_name: (data.first + ' ' + data.last).trim(),
     patient_phone: data.phone,
     patient_id_number: data.idnum || null, patient_note: data.note || null,
-    status: 'pending', status_changed_at: null, cancel_reason: null,
+    status: 'pending', status_changed_at: null, cancel_reason: null, cancel_code: null,
+    // תור שנקבע מחוץ לשעות הקבלה — מסומן כדי שיהיה אפשר לראות
+    // אחר כך כמה חריגות היו, ולא רק לזכור שהיו
+    off_hours: !!data.offHours,
     source: 'manual', created_by: auth.currentUser ? auth.currentUser.email : null,
     flags: {},
     // תור ידני לא הגיע מקמפיין — ולכן לא ייספר כהמרה מגוגל.
@@ -1140,6 +1231,7 @@ function cardHtml(a) {
 
   const badges = [];
   if (manual) badges.push('<span class="badge manual">תור ידני</span>');
+  if (a.off_hours) badges.push('<span class="badge late">מחוץ לשעות הקבלה</span>');
   if (a.last_visit) badges.push('<span class="badge ret">🔄 ביקור אחרון: '+esc(a.last_visit)+'</span>');
   if (st === 'red') badges.push('<span class="badge late">מעל שעתיים ללא תגובה</span>');
   if (a.lead_source && a.lead_source !== 'staff')
@@ -1156,8 +1248,11 @@ function cardHtml(a) {
     ' target="_blank" rel="noopener">' + esc(label) + '</a>';
 
   if (a.status === 'cancelled') {
+    if (a.cancel_reason)
+      badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
+    // הנוסח נבחר לפי סיבת הביטול — ראו cancelWaKind
     checks = '<div class="acts">' +
-      wa('cancel','💬 שלח הודעת ביטול','go') +
+      wa(cancelWaKind(a),'💬 שלח הודעת ביטול','go') +
       '<button data-act="revive" data-id="'+a._id+'">החזרה ליומן</button></div>';
   } else if (manual) {
     checks = '<div class="checks">' + chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
@@ -1413,7 +1508,10 @@ function openManual(from, preset) {
         '<option value="'+m+'"'+(String(m)===String(pick.duration)?' selected':'')+'>'+esc(n)+' · '+m+' דק׳</option>').join('') +
     '</select>' +
     '<label>תאריך</label><input id="mDate" type="date" value="'+pick.date+'">' +
+    '<div id="mWin" class="sub" style="margin:6px 0 2px"></div>' +
     '<label>שעה פנויה</label><div class="slotpick" id="mSlots"></div>' +
+    '<label class="chk" style="margin-top:8px"><input type="checkbox" id="mForce">' +
+      '<span>לחרוג משעות הקבלה של אותו יום</span></label>' +
     '<div class="err" id="eSlot">נא לבחור שעה</div>' +
     '<label>הערה (לא חובה)</label><textarea id="mNote"></textarea>' +
     '<button class="go" id="mSave">שמור תור</button>' +
@@ -1424,27 +1522,51 @@ function openManual(from, preset) {
   $('mCancel').onclick = close;
   host.querySelector('.modal').onclick = (e) => { if (e.target.classList.contains('modal')) close(); };
 
-  const paintSlots = () => {
+  /* keepTime שומר על השעה שנבחרה מהיומן ב-"+ קבע כאן". בלעדיו
+     הציור הראשון מחק אותה, והצוות היה צריך לחפש שוב את אותה שעה. */
+  const paintSlots = (keepTime) => {
     pick.duration = +$('mDur').value;
     pick.date = $('mDate').value;
-    pick.time = null;
+    if (!keepTime) pick.time = null;
     const box = $('mSlots');
     const [y,mo,dd] = pick.date.split('-').map(Number);
     const day = new Date(y, mo-1, dd);
     const w = windowFor(day);
+    const force = $('mForce') && $('mForce').checked;
 
-    if (!w) { box.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:15px">'+
-      'יום זה סגור בלוז הקבוע. אפשר בכל זאת לבחור שעה — ראו הערה למטה.</div>'; }
+    /* ── למה זה חשוב ────────────────────────────────────────────────
+       קודם, יום סגור נפל אוטומטית ל-08:00–20:00, וכך "תור המשך"
+       הציע שעות בימים שהמרפאה כלל לא פתוחה בהם. תור שנקבע ככה
+       נראה תקין לגמרי במסך — ומתגלה רק כשהמטופל מגיע לדלת נעולה.
+       עכשיו הלוז הוא הכלל, והחריגה היא החלטה מודעת בצ׳קבוקס.
+       ─────────────────────────────────────────────────────────── */
+    const dow = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'][day.getDay()];
+    const win = $('mWin');
+    if (win) {
+      win.textContent = w
+        ? ('יום ' + dow + ' · שעות קבלה ' + w.open + '–' + w.close + (force ? ' · חורג' : ''))
+        : ('יום ' + dow + ' — המרפאה סגורה' + (force ? ' · חורג' : ''));
+      win.style.color = (!w || force) ? 'var(--red, #b23b3b)' : 'var(--muted)';
+    }
+
+    if (!w && !force) {
+      box.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);font-size:15px">' +
+        'יום ' + dow + ' סגור בלוז. כדי לקבוע בכל זאת — סמנו "לחרוג משעות הקבלה".</div>';
+      pick.time = null;
+      return;
+    }
 
     // תפוסה נגזרת מהתורים שכבר טעונים למסך — מספיק להצגה,
     // והנעילה עצמה נבדקת שוב בטרנזקציה בעת השמירה.
     const busy = new Set();
     appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === pick.date)
          .forEach(a => unitsOf(a).forEach(u => busy.add(u)));
-    blockedFor(day).forEach(u => busy.add(u));   // חסימות ממסך ההגדרות
+    // חסימות ידניות ממסך ההגדרות. חריגה מודעת גוברת גם עליהן —
+    // אחרת אי אפשר לדחוף מטופל לחלון שנחסם להפסקה.
+    if (!force) blockedFor(day).forEach(u => busy.add(u));
 
-    const openM  = w ? toMin(w.open)  : toMin('08:00');
-    const closeM = w ? toMin(w.close) : toMin('20:00');
+    const openM  = force ? toMin('08:00') : toMin(w.open);
+    const closeM = force ? toMin('20:00') : toMin(w.close);
     let html = '';
     for (let m = openM; m + pick.duration <= closeM; ) {
       let fits = true;
@@ -1467,9 +1589,10 @@ function openManual(from, preset) {
     // אם השעה שנבחרה מהיומן כבר לא זמינה במשך שנבחר — מנקים אותה
     if (pick.time && !box.querySelector('[data-t="'+pick.time+'"]')) pick.time = null;
   };
-  $('mDur').onchange = paintSlots;
-  $('mDate').onchange = paintSlots;
-  paintSlots();
+  $('mDur').onchange   = () => paintSlots();
+  $('mDate').onchange  = () => paintSlots();
+  $('mForce').onchange = () => paintSlots();
+  paintSlots(true);
   window.__manualRepaint = paintSlots;   // לבדיקות
 
   $('mSave').onclick = async () => {
@@ -1493,6 +1616,7 @@ function openManual(from, preset) {
     const res = await createManual({
       first, last, phone, idnum: idnum ? idnum.padStart(9,'0') : '',
       note: $('mNote').value.trim(), duration: pick.duration, when,
+      offHours: $('mForce').checked,
       serviceCode: pick.duration === 30 ? 'D' : (pick.duration === 20 ? 'R' : 'P')
     });
     btn.disabled = false; btn.textContent = 'שמור תור';
@@ -1507,6 +1631,7 @@ window.HollandStaff = { CFG, TXT, state, statusOf, unitsOf, visible, render,
                         cardHtml, openManual, isoOf, hhmmOf, splitName,
                         odoroFields, copyAct, copyStep, wire, waLink, WA,
                         windowFor, blockedFor, schedule, renderSettings,
+                        cancelAppt, cancelWaKind, CANCEL_REASONS,
                         setAppts: (x) => { appts = x; } };
 </script>
 </body>
