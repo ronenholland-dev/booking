@@ -409,12 +409,19 @@ const CONFIG = {
   conversionValue: { new: 2000, follow: 600 },
   currency: 'ILS',
 
-  /* מזהי מדידה — לתיעוד. התגים עצמם מוגדרים בקונטיינר GTM-TW674CWJ. */
+  /* מזהי מדידה — לתיעוד. התגים עצמם מוגדרים בקונטיינר GTM-TW674CWJ.
+     החשבון הפעיל הוא 967-613-2764 (dr-holland.co.il). חשבון 628-513-8931
+     אינו פעיל שנים — אין לחבר אליו כלום.
+
+     הלייבל שייך לפעולת ההמרה 'Appointment Request' שנוצרה ב-10.9.2026.
+     הלייבל הקודם, 9LhACMatuIsDEO-xjqko, הצביע לפעולה שנמחקה — כלומר
+     התג ירה לשום מקום. אם משנים או מוחקים את פעולת ההמרה בגוגל אדס,
+     צריך לעדכן כאן וגם בתג ב-GTM. */
   measurement: {
     gtm:      'GTM-TW674CWJ',
     ga4:      'G-Y0JJDTQS0C',
     adsId:    'AW-10823637231',
-    adsLabel: '9LhACMatuIsDEO-xjqko'
+    adsLabel: 'rfiWCMvSrvMcEO-xjqko'
   },
 
   /* ── Firebase ──────────────────────────────────────────────────────
@@ -480,8 +487,24 @@ const Lead = (() => {
     const q = new URLSearchParams(location.search);
     const g = (k) => q.get(k) || null;
 
+    /* ── שלושה מזהי קליק, ולא אחד ────────────────────────────────────
+       gclid  — הרגיל, ברוב התנועה
+       gbraid — נשלח במקומו לחלק מתנועת iOS
+       wbraid — אותו דבר, במסלול web-to-app
+
+       הערך נשמר כאן, אבל **גם מאיזה פרמטר הוא הגיע** — כי בהעלאת
+       המרות לגוגל אדס לכל סוג יש עמודה נפרדת. ערך gbraid שנשלח
+       בעמודת Google Click ID נדחה כמזהה לא מוכר, וההמרה נעלמת
+       בשקט. בלי השדה הזה, כל המרה ממשתמש אייפון הייתה אובדת. */
+    const clickId =
+        (g('gclid')  && { v: g('gclid'),  t: 'gclid'  }) ||
+        (g('wbraid') && { v: g('wbraid'), t: 'wbraid' }) ||
+        (g('gbraid') && { v: g('gbraid'), t: 'gbraid' }) ||
+        { v: null, t: null };
+
     const url = {
-      gclid: g('gclid') || g('wbraid') || g('gbraid'),
+      gclid: clickId.v,
+      click_id_type: clickId.t,
       utm: {
         source:   g('utm_source'),
         medium:   g('utm_medium'),
@@ -498,6 +521,7 @@ const Lead = (() => {
     const data = {
       captured_at: new Date().toISOString(),
       gclid:    url.gclid,
+      click_id_type: url.click_id_type,
       utm:      url.utm,
       src:      url.src,
       referrer: document.referrer || null,
@@ -511,10 +535,14 @@ const Lead = (() => {
     if (hasPaid) {
       // מגע חדש עם מקור מזוהה — הוא גובר, ונשמר גם לעתיד.
       data.first_touch_at = data.captured_at;
-      writeFirst({ at: data.captured_at, gclid: url.gclid, utm: url.utm });
+      writeFirst({ at: data.captured_at, gclid: url.gclid,
+                   click_id_type: url.click_id_type, utm: url.utm });
     } else if (first) {
       // אין פרמטרים בכתובת, אבל יש מגע קודם בתוקף — משחזרים אותו.
       data.gclid = first.gclid;
+      // סוג המזהה חייב להשתחזר יחד עם הערך, אחרת מזהה iOS שנשמר
+      // לפני 80 יום יחזור בלי לדעת לאיזו עמודה הוא שייך.
+      data.click_id_type = first.click_id_type || (first.gclid ? 'gclid' : null);
       data.utm   = first.utm || data.utm;
       data.first_touch_at = first.at;
       data.attribution_recovered = true;
@@ -690,10 +718,37 @@ const Cal = (() => {
     return weekly[date.getDay()] || null;
   }
 
-  /* יחידות שנחסמו ידנית ליום זה במסך ההגדרות */
+  /* ── אירועים קבועים ────────────────────────────────────────────
+     אותו מבנה בדיוק כמו במסך הצוות, ומאותו אוסף overrides.
+     ⚠️ שני הקבצים קוראים את אותם מסמכים — כל שינוי כאן חייב
+        להיעשות גם ב-staff.html, ולהיפך. אחרת צד אחד חוסם זמן
+        והצד השני מציע אותו לקביעה.
+
+     המטופל לא רואה את האירוע עצמו ולא את שמו — רק שהשעות
+     האלה אינן מוצעות. שם הפגישה הוא מידע פנימי. */
+  function eventsFor(date) {
+    const ov = sched.overrides[iso(date)];
+    return (ov && Array.isArray(ov.events)) ? ov.events : [];
+  }
+
+  function evUnits(ev) {
+    const out = [];
+    if (!ev || !ev.start || !ev.end) return out;
+    const from = toMin(ev.start) - (ev.buffer_before_min || 0);
+    const to   = toMin(ev.end)   + (ev.buffer_after_min  || 0);
+    for (let m = Math.max(0, from); m < to; m += CONFIG.baseGridMin)
+      out.push(unitKey(m));
+    return out;
+  }
+
+  /* יחידות שנחסמו ליום זה — ידנית במסך ההגדרות, או על ידי אירוע */
   function blockedFor(date) {
     const ov = sched.overrides[iso(date)];
-    return new Set((ov && ov.blocked) || []);
+    const set = new Set((ov && ov.blocked) || []);
+    eventsFor(date).forEach(ev => {
+      if (!ev.cancelled) evUnits(ev).forEach(u => set.add(u));
+    });
+    return set;
   }
 
   /* דמו: תפוסה דטרמיניסטית לפי hash — הלוח נראה אמין ולא משתנה ברענון */
@@ -757,7 +812,8 @@ const Cal = (() => {
   const hasFree = (date, dur, busy) => slotsFor(date, dur, busy).length > 0;
 
   return { iso, windowFor, blockedFor, slotsFor, unitsFor, hasFree,
-           demoUnits, toMin, toHHMM, unitKey, setSchedule };
+           demoUnits, toMin, toHHMM, unitKey, setSchedule,
+           eventsFor, evUnits };
 })();
 
 
@@ -1372,6 +1428,9 @@ function buildAppointment() {
     lead_source: lead.lead_source || 'direct',
     utm: lead.utm || {},
     gclid: lead.gclid || null,
+    // 'gclid' | 'gbraid' | 'wbraid' — קובע לאיזו עמודה השורה תיכתב
+    // בייצוא ההמרות. ראו adsCsv ב-staff.html.
+    click_id_type: lead.click_id_type || null,
     referrer: lead.referrer || null,
     device: lead.device || 'desktop',
     /* ייחוס רב-מגעי — ראו ההסבר במודול Lead */
