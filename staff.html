@@ -63,7 +63,13 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .top h1{margin:0;font-size:18px;font-weight:700}
 .top .who{font-size:13px;opacity:.8}
 .top button{background:transparent;border:1px solid rgba(255,255,255,.45);
-  color:#fff;border-radius:8px;padding:7px 12px;font:500 14px inherit;cursor:pointer}
+  color:#fff;border-radius:8px;padding:7px 12px;font:500 14px inherit;cursor:pointer;
+  white-space:nowrap}
+/* בטלפון צר הטקסט המלא של "קישור לקביעת תור" מגלישׁ את הכותרת ויוצר
+   גלילה אופקית. מתחת ל-430px נשאר רק האייקון — המשמעות נשמרת ב-title,
+   והכפתור נותר גדול מספיק ללחיצה באצבע. */
+#copyBook{display:inline-flex;align-items:center;gap:6px}
+@media (max-width:430px){ #copyBook .lbl{display:none} #copyBook{padding:7px 10px} }
 
 /* ── לשוניות ── */
 .tabs{display:flex;border-bottom:1px solid var(--line);background:#fff;
@@ -331,9 +337,10 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 
   <div id="app" class="hidden">
     <div class="top">
-      <div><h1>יומן תורים</h1><div class="who" id="whoami"></div></div>
+      <div style="min-width:0"><h1>יומן תורים</h1><div class="who" id="whoami"></div></div>
       <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
-        <button id="copyBook" title="מעתיק ללוח קישור לקביעת תור, להדבקה בווטסאפ">קישור לקביעת תור</button>
+        <button id="copyBook" title="מעתיק ללוח קישור לקביעת תור, להדבקה בווטסאפ"
+          aria-label="העתק קישור לקביעת תור">🔗<span class="lbl">קישור לקביעת תור</span></button>
         <button id="logout">יציאה</button>
       </div>
     </div>
