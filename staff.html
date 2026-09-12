@@ -332,7 +332,10 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
   <div id="app" class="hidden">
     <div class="top">
       <div><h1>יומן תורים</h1><div class="who" id="whoami"></div></div>
-      <button id="logout">יציאה</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <button id="copyBook" title="מעתיק ללוח קישור לקביעת תור, להדבקה בווטסאפ">קישור לקביעת תור</button>
+        <button id="logout">יציאה</button>
+      </div>
     </div>
     <div class="tabs">
       <button class="tab on" data-tab="todo">לטיפול <span class="n" id="nTodo">0</span></button>
@@ -392,6 +395,21 @@ const CFG = {
      {תשלום} בנוסחי הוואטסאפ. אם ריק — ההודעה תיפתח בלי שורת הקישור. */
   paymentLink:  'https://private.invoice4u.co.il/newsite/he/clearing/public/' +
                 'i4u-payment?ProductGuid=8bdfb2da-1c46-4e9b-87e6-2d1814d0232d',
+
+  /* ── הקישור שנשלח למטופל כדי שיקבע תור בעצמו ────────────────────
+     נדרש כאשר מטופל פונה בווטסאפ ועוד אין לו תור, ולכן אין כרטיס
+     ואין נוסח מוכן — עתליה עונה לו ידנית ומדביקה את הקישור.
+
+     ‼️ הפרמטר ?src=whatsapp הוא לא קוסמטיקה. בלעדיו הליד נרשם
+     כ"ישיר" ומתערבב עם אורגני ועם מי שהקליד את הכתובת לבד. ואם
+     המטופל הגיע במקור ממודעה — הקרדיט עדיין יישמר למודעה (gclid
+     נשמר 90 יום), אבל השדה reentry_src ירשום 'referral' במקום
+     'whatsapp', וכך נאבד את המידע שהמעקב של עתליה הוא מה שסגר.
+     ראו את ההסבר המלא ב-MEASUREMENT.md.
+
+     להוספת ערוץ נוסף — להוסיף כאן שורה, והכפתור בכותרת יתעדכן. */
+  bookingLink: 'https://booking.dr-holland.co.il/',
+  bookingSrc:  'whatsapp',
 
   /* ── מי חתום על ההודעות למטופל ──────────────────────────────────
      תמיד עתליה, גם כשרוני שולח בפועל. זו החלטה מכוונת ולא פשרה:
@@ -629,6 +647,13 @@ $('loginBtn').onclick = async () => {
 };
 $('pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
 $('logout').onclick = () => signOut(auth);
+
+/* קישור לקביעת תור — להדבקה בווטסאפ למי שעוד אין לו תור.
+   נבנה מ-CFG כדי שהפרמטר src לא ייכתב ידנית ולא יישמט. */
+$('copyBook').onclick = async () => {
+  const url = CFG.bookingLink + (CFG.bookingSrc ? '?src=' + encodeURIComponent(CFG.bookingSrc) : '');
+  toast(await copyText(url) ? 'הקישור הועתק — אפשר להדביק בווטסאפ' : 'ההעתקה נכשלה: ' + url);
+};
 
 let unsub = null;
 onAuthStateChanged(auth, (user) => {
