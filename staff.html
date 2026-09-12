@@ -212,6 +212,37 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .free button{background:#fff;border:1px solid var(--sage);color:var(--sage);
   border-radius:8px;padding:8px 14px;font:700 14px inherit;cursor:pointer}
 .free button:hover{background:var(--mint)}
+/* זמן חסום — נראה אחרת מ"פנוי" ומ"תפוס", ובלי כפתור קביעה */
+.blockedrow{border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 15px;margin-bottom:13px;display:flex;align-items:center;
+  gap:12px;flex-wrap:wrap;
+  background:repeating-linear-gradient(135deg,#f4f5f7,#f4f5f7 9px,#eceef1 9px,#eceef1 18px)}
+.blockedrow .t{font-weight:700;color:var(--muted);font-size:16px}
+.blockedrow .lbl{color:#5b6270;font-size:14.5px;font-weight:600}
+/* אירוע קבוע — נראה כמו פגישה, לא כמו תור מטופל */
+.evrow{border:1px solid #b9c4d8;border-inline-start:5px solid #5b74a8;
+  border-radius:var(--radius);padding:13px 15px;margin-bottom:13px;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#f5f7fc}
+.evrow .t{font-weight:700;color:#3f5288;font-size:16px}
+.evrow .ttl{flex:1;font-weight:600;color:#2f3542;font-size:15px}
+.evrow button{background:#fff;border:1px solid #b9c4d8;color:#5b6270;
+  border-radius:8px;padding:7px 12px;font:500 13.5px inherit;cursor:pointer}
+.evrow button:hover{background:#eef1f8}
+/* אירוע שבוטל לשבוע זה — בראש היום, בלי שעה */
+.evcancelled{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-bottom:13px;padding:10px 14px;border-radius:var(--radius);
+  background:#f7f7f8;border:1px dashed #cfd3d9}
+.evcancelled .x{color:#b23b3b;font-weight:700}
+.evcancelled .ttl{flex:1;color:var(--muted);font-size:14.5px;text-decoration:line-through}
+.evcancelled button{background:#fff;border:1px solid #cfd3d9;color:var(--navy);
+  border-radius:8px;padding:6px 12px;font:600 13px inherit;cursor:pointer}
+/* משימות היום — בראש הלוז, לפני ציר הזמן */
+.rxhdr{font-weight:700;color:var(--navy);font-size:14.5px;margin:4px 0 10px;
+  padding-bottom:6px;border-bottom:2px solid var(--mint)}
+.card.rx .hd .when{color:#7a5ea8}
+.rxchk{margin:14px 0 4px;font-weight:600}
+.rxinfo{background:#f3f0fa;border:1px solid #d9d0ee;border-radius:9px;
+  padding:11px 13px;margin-bottom:12px;font-size:14px;line-height:1.6;color:#4a3c6b}
 .closedday{text-align:center;color:var(--muted);background:var(--grey-bg);
   border-radius:var(--radius);padding:16px;font-size:15px;margin-bottom:16px}
 
@@ -526,7 +557,20 @@ const dateOf = (a) => a.slot_start && a.slot_start.toDate ? a.slot_start.toDate(
                                                           : new Date(a.slot_start);
 const stampOf = (v) => !v ? null : (v.toDate ? v.toDate() : new Date(v));
 
+/* ── משימת חידוש מרשם ──────────────────────────────────────────────
+   מטופל מבקש חידוש מרשם בוואטסאפ. זו משימה ולא תור: היא צורכת זמן
+   מיום העבודה, אבל אין מולה מטופל בשעה מסוימת.
+
+   ולכן, בשלושה דברים היא שונה מתור:
+     · אינה תופסת שום יחידת זמן ביומן — unitsOf מחזיר ריק
+     · אינה נגזרת לאודורו — אין מה לוודא מול המטופל, ואין תור פיזי
+       שצריך להופיע ב-Q-Flow של המרפאה
+     · מוצגת בראש היום בלי שעה, ולא במיקום בציר הזמן
+   ─────────────────────────────────────────────────────────────── */
+const isRxTask = (a) => !!(a && a.rx_task);
+
 function unitsOf(appt) {
+  if (isRxTask(appt)) return [];   // משימה אינה תופסת סלוט
   const d = dateOf(appt), out = [];
   const start = d.getHours()*60 + d.getMinutes();
   for (let m = start; m < start + (appt.slot_duration_min||30); m += CFG.baseGridMin) {
@@ -535,10 +579,24 @@ function unitsOf(appt) {
   return out;
 }
 
+/* יום העבודה הבא שהמרפאה פתוחה בו, החל ממחר.
+   משימה שנופלת על שבת או חג פשוט לא תיראה עד שהיום יגיע. */
+function nextWorkingDay(from) {
+  const d = new Date(from || new Date());
+  d.setHours(0,0,0,0);
+  for (let i = 0; i < 60; i++) {
+    d.setDate(d.getDate() + 1);
+    if (windowFor(d)) return d;
+  }
+  return d;   // גיבוי — לא אמור לקרות
+}
+
 /* ── מצב הסלוט: הכלל מהאיפיון, מחושב בזמן תצוגה ולא בתהליך רקע ── */
 function statusOf(a) {
   if (a.status === 'cancelled') return 'grey';
   const f = a.flags || {};
+  // משימת מרשם: ירוקה כשבוצעה. אין כאן שעתיים ואין אודורו.
+  if (isRxTask(a)) return f.rx_done_at ? 'green' : 'orange';
   if (a.source === 'manual') return f.copied_at ? 'green' : 'orange';
   if (f.paid_entered_at) return 'green';
   if (f.contacted_at) {
@@ -794,6 +852,46 @@ async function reviveAppt(a) {
   }
 }
 
+/* ── יצירת משימת חידוש מרשם ────────────────────────────────────────
+   בניגוד לתור, אין כאן טרנזקציה על day_slots — המשימה לא תופסת
+   סלוט ולכן אין מה לנעול, ואין סיכון להתנגשות. השעה נקבעת ל-00:00
+   ומשמשת לקיבוץ לפי יום בלבד; היא לעולם אינה מוצגת.
+   ─────────────────────────────────────────────────────────────── */
+async function createRxTask(data) {
+  const when = new Date(data.when);
+  when.setHours(0, 0, 0, 0);
+  const id = crypto.randomUUID();
+
+  const appt = {
+    id, created_at: Timestamp.now(),
+    slot_start: Timestamp.fromDate(when),
+    slot_duration_min: 0,
+    rx_task: true,
+    visit_track: 'follow',
+    service_code: 'P',
+    patient_first: data.first, patient_last: data.last,
+    patient_name: (data.first + ' ' + data.last).trim(),
+    patient_phone: data.phone,
+    patient_id_number: data.idnum || null,
+    patient_note: null,
+    staff_note: data.note || null,
+    status: 'pending', status_changed_at: null,
+    cancel_reason: null, cancel_code: null,
+    off_hours: false,
+    source: 'manual', created_by: auth.currentUser ? auth.currentUser.email : null,
+    flags: {},
+    lead_source: 'staff', utm: {}, gclid: null, click_id_type: null,
+    referrer: null, device: 'staff',
+    first_touch_at: null, reentry_src: null, attribution_recovered: false,
+    conversion_sent: false, offline_uploaded: false
+  };
+
+  try {
+    await setDoc(doc(db, 'appointments', id), appt);
+    return { ok: true };
+  } catch (e) { console.error(e); return { ok: false }; }
+}
+
 /* תור ידני / תור המשך — אותה נעילה אטומית בדיוק כמו בזרימת המטופל.
    זה מה שמונע התנגשות בין תור שהצוות מזין לתור שנקבע במקביל. */
 async function createManual(data) {
@@ -884,8 +982,10 @@ function visible() {
     const iso = isoOf(state.day);
     return list.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === iso);
   }
-  // "לטיפול" — כל מה שעדיין לא ירוק ולא מבוטל, הדחוף למעלה
-  return list.filter(a => a.status !== 'cancelled' && statusOf(a) !== 'green')
+  /* "לטיפול" — כל מה שעדיין לא ירוק ולא מבוטל, הדחוף למעלה.
+     משימות מרשם אינן נכנסות לכאן במכוון: הן מופיעות בלוז של היום
+     שלהן בלבד, כדי שהרשימה הזו תישאר רשימת מטופלים שממתינים. */
+  return list.filter(a => a.status !== 'cancelled' && !isRxTask(a) && statusOf(a) !== 'green')
              .sort((x,y) => {
                const rank = (a) => statusOf(a) === 'red' ? 0 : 1;
                return rank(x) - rank(y) || dateOf(x) - dateOf(y);
@@ -893,7 +993,7 @@ function visible() {
 }
 
 function render() {
-  $('nTodo').textContent = appts.filter(a => a.status !== 'cancelled' && statusOf(a) !== 'green').length;
+  $('nTodo').textContent = appts.filter(a => a.status !== 'cancelled' && !isRxTask(a) && statusOf(a) !== 'green').length;
   $('nCanc').textContent = appts.filter(a => a.status === 'cancelled').length;
   const d = state.day;
   $('dLbl').textContent = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
@@ -969,16 +1069,51 @@ function windowFor(date) {
   }
   return (schedule.weekly || CFG.hours)[date.getDay()] || null;
 }
+/* ── אירועים קבועים ביומן ──────────────────────────────────────────
+   לא כל מה שתופס זמן הוא תור. יש פגישות קבועות — למשל הזום עם ענת
+   בימי שלישי — ולהן שעות אמיתיות שצריך לראות, כי היומן הזה הוא
+   יומן העבודה בפועל ולא רק רשימת מטופלים.
+
+   מבנה האירוע על מסמך החריג:
+     { title, start:'12:00', end:'12:50',
+       buffer_before_min:20, buffer_after_min:10, cancelled:false }
+
+   החיץ חוסם קביעת תורים לפני ואחרי, אבל אינו חלק מהאירוע עצמו —
+   ולכן אינו מוצג כשעת הפגישה. אירוע מבוטל משחרר את כל היחידות
+   שלו, כולל החיץ. ─────────────────────────────────────────────── */
+const eventsFor = (date) => {
+  const ov = schedule.overrides[isoOf(date)];
+  return (ov && Array.isArray(ov.events)) ? ov.events : [];
+};
+
+/* היחידות שהאירוע תופס בפועל — כולל החיץ משני הצדדים */
+function evUnits(ev) {
+  const out = [];
+  if (!ev || !ev.start || !ev.end) return out;
+  const from = toMin(ev.start) - (ev.buffer_before_min || 0);
+  const to   = toMin(ev.end)   + (ev.buffer_after_min  || 0);
+  for (let m = Math.max(0, from); m < to; m += CFG.baseGridMin)
+    out.push(pad(Math.floor(m/60)) + pad(m%60));
+  return out;
+}
+
 const blockedFor = (date) => {
   const ov = schedule.overrides[isoOf(date)];
-  return new Set((ov && ov.blocked) || []);
+  const set = new Set((ov && ov.blocked) || []);
+  eventsFor(date).forEach(ev => { if (!ev.cancelled) evUnits(ev).forEach(u => set.add(u)); });
+  return set;
 };
 
 async function saveOverride(iso, patch) {
   const cur = schedule.overrides[iso] || { date: iso };
   const next = Object.assign({}, cur, patch, { date: iso });
-  // מסמך שאין בו שום חריגה — נמחק, כדי שהיום יחזור לברירת המחדל
-  const empty = !next.closed && !next.open && !(next.blocked && next.blocked.length);
+  /* מסמך שאין בו שום חריגה — נמחק, כדי שהיום יחזור לברירת המחדל.
+     ⚠️ אירועים נחשבים תוכן גם כשהם מבוטלים: מסמך שיש בו רק אירוע
+        מבוטל חייב לשרוד, אחרת "בטל לשבוע זה" היה מוחק את הפגישה
+        הקבועה מאותו תאריך לתמיד ואי אפשר היה להחזיר אותה. */
+  const empty = !next.closed && !next.open &&
+                !(next.blocked && next.blocked.length) &&
+                !(next.events && next.events.length);
   try {
     if (empty) { await deleteDoc(doc(db,'overrides',iso)); delete schedule.overrides[iso]; }
     else       { await setDoc(doc(db,'overrides',iso), next); schedule.overrides[iso] = next; }
@@ -1083,7 +1218,9 @@ function paintDayEdit() {
          : ov.open ? '<span class="tag custom">שעות חריגות ' + esc(ov.open) + '–' + esc(ov.close) + '</span>'
          : defW    ? '<span class="tag def">לפי הלוז הקבוע ' + esc(defW.open) + '–' + esc(defW.close) + '</span>'
                    : '<span class="tag closed">סגור בלוז הקבוע</span>') +
-        (blocked.size ? '<span class="tag part">' + blocked.size + ' סלוטים חסומים</span>' : '') +
+        (blocked.size ? '<span class="tag part">' +
+            (ov.blocked_label ? esc(ov.blocked_label) + ' · ' : '') +
+            blocked.size + ' סלוטים חסומים</span>' : '') +
       '</div>' +
       '<div class="dayacts">' +
         (w ? '<button data-set="close">סגור את כל היום</button>' : '') +
@@ -1209,6 +1346,19 @@ function paintTimeline() {
   let html = '<div class="dayhdr">' + DOW[d.getDay()] + ' ' + d.getDate() + '.' +
              (d.getMonth()+1) + '.' + d.getFullYear() + '</div>';
 
+  // אירועים שבוטלו לשבוע זה — בראש היום, בלי שעה
+  eventsFor(d).forEach((ev, i) => {
+    if (ev.cancelled) html += cancelledNoteHtml(ev, iso, i);
+  });
+
+  /* משימות חידוש מרשם — בראש היום, בלי שעה ולפני ציר הזמן.
+     הן אינן משתתפות בציר עצמו כי אין להן מיקום בו. */
+  const rx = dayAppts.filter(isRxTask);
+  if (rx.length) {
+    html += '<div class="rxhdr">משימות להיום · ' + rx.length + '</div>';
+    rx.forEach(a => { html += cardHtml(a); });
+  }
+
   if (!w) {
     html += '<div class="closedday">היום סגור לקביעה עצמאית' +
             (d.getDay() === 3 ? ' — יום מכבי' : '') +
@@ -1218,27 +1368,46 @@ function paintTimeline() {
   const openM  = w ? toMin(w.open)  : null;
   const closeM = w ? toMin(w.close) : null;
   const startOf = (a) => { const t = dateOf(a); return t.getHours()*60 + t.getMinutes(); };
+  const blocked = blockedFor(d);
+  /* ברירת המחדל לרצועה חסומה ביום שיש בו אירוע היא "חיץ" ולא שם
+     האירוע — אחרת 11:40 היה נראה כשעת הפגישה, והמטרה כאן הפוכה. */
+  const blockLabel = (schedule.overrides[iso] || {}).blocked_label ||
+                     (eventsFor(d).some(e => !e.cancelled) ? 'חיץ' : null);
 
-  // תורים שנקבעו מחוץ לשעות הפעילות מוצגים בנפרד, כדי שלא ייעלמו
-  const inside  = w ? dayAppts.filter(a => startOf(a) >= openM && startOf(a) < closeM) : [];
-  const outside = w ? dayAppts.filter(a => !(startOf(a) >= openM && startOf(a) < closeM)) : dayAppts;
+  /* תורים שנקבעו מחוץ לשעות הפעילות מוצגים בנפרד, כדי שלא ייעלמו.
+     משימות מרשם אינן משתתפות — הן כבר הוצגו בראש היום, ואין להן
+     שעה שתציב אותן בתוך הציר או מחוצה לו. */
+  const timed   = dayAppts.filter(a => !isRxTask(a));
+  const inside  = w ? timed.filter(a => startOf(a) >= openM && startOf(a) < closeM) : [];
+  const outside = w ? timed.filter(a => !(startOf(a) >= openM && startOf(a) < closeM)) : timed;
 
   if (w) {
+    /* תורים ואירועים פעילים נכנסים לאותו ציר זמן, ממוינים יחד.
+       אירוע מוצג בשעות שלו; החיץ סביבו נופל לתוך ה"פנוי" ומצויר שם
+       כרצועה חסומה — כך שהשעה שרואים היא שעת הפגישה האמיתית. */
+    const occ = inside.map(a => ({
+        at: startOf(a), to: startOf(a) + (a.slot_duration_min || 30), appt: a }));
+    eventsFor(d).forEach((ev, i) => {
+      if (ev.cancelled || !ev.start || !ev.end) return;
+      occ.push({ at: toMin(ev.start), to: toMin(ev.end), ev, evIdx: i });
+    });
+    occ.sort((x, y) => x.at - y.at);
+
     let cursor = openM;
-    const q = inside.slice();
+    const q = occ.slice();
     while (cursor < closeM) {
       const next = q[0];
-      if (next && startOf(next) <= cursor) {
-        html += cardHtml(next);
-        cursor = Math.max(cursor + 1, startOf(next) + (next.slot_duration_min || 30));
+      if (next && next.at <= cursor) {
+        html += next.appt ? cardHtml(next.appt) : eventHtml(next.ev, iso, next.evIdx);
+        cursor = Math.max(cursor + 1, next.to);
         q.shift();
         continue;
       }
-      const gapEnd = next ? Math.min(startOf(next), closeM) : closeM;
-      if (gapEnd > cursor) html += freeHtml(cursor, gapEnd);
+      const gapEnd = next ? Math.min(next.at, closeM) : closeM;
+      if (gapEnd > cursor) html += gapHtml(cursor, gapEnd, blocked, blockLabel);
       cursor = gapEnd;
     }
-    if (!inside.length && !outside.length) {
+    if (!occ.length && !outside.length) {
       html += '<div class="empty" style="padding:20px">כל היום פנוי</div>';
     }
   }
@@ -1253,6 +1422,79 @@ function paintTimeline() {
   box.querySelectorAll('[data-free]').forEach(b => b.onclick = () => {
     openManual(null, { date: iso, time: b.dataset.free });
   });
+  wireEvents(box);
+}
+
+/* ביטול והחזרה של אירוע — ליום אחד בלבד.
+   שאר השבועות אינם מושפעים, כי לכל תאריך יש עותק משלו של האירוע. */
+function wireEvents(box) {
+  const setCancelled = async (dateIso, idx, val) => {
+    const ov = schedule.overrides[dateIso];
+    if (!ov || !Array.isArray(ov.events) || !ov.events[idx]) return;
+    const events = ov.events.map((e, i) =>
+      i === +idx ? Object.assign({}, e, { cancelled: val }) : e);
+    await saveOverride(dateIso, { events });
+    toast(val ? 'האירוע בוטל לשבוע זה — הזמן פנוי לקביעה' : 'האירוע הוחזר');
+  };
+  box.querySelectorAll('[data-evcancel]').forEach(b => b.onclick = () =>
+    setCancelled(b.dataset.evdate, b.dataset.evcancel, true));
+  box.querySelectorAll('[data-evrestore]').forEach(b => b.onclick = () =>
+    setCancelled(b.dataset.evdate, b.dataset.evrestore, false));
+}
+
+/* ── זמן חסום ביומן ────────────────────────────────────────────────
+   עד עכשיו יחידה חסומה פשוט לא נספרה כפנויה — ולכן לא הופיעה ביומן
+   בכלל, והזמן נראה פנוי. עתליה הייתה רואה חלון ריק בלי לדעת למה
+   אי אפשר לקבוע בו.
+
+   עכשיו החסימה מוצגת במפורש, עם השם שניתן לה (blocked_label) —
+   למשל "זום עם ענת" בימי שלישי. ─────────────────────────────── */
+function blockedHtml(fromMin, toMinEnd, label) {
+  const t = (m) => pad(Math.floor(m/60)) + ':' + pad(m%60);
+  return '<div class="blockedrow">' +
+      '<span class="t">' + t(fromMin) + ' – ' + t(toMinEnd) + '</span>' +
+      '<span class="lbl">' + esc(label || 'זמן חסום') + '</span>' +
+    '</div>';
+}
+
+/* אירוע פעיל — בשעות האמיתיות שלו, כדי שאפשר יהיה לדעת מתי להתחבר */
+function eventHtml(ev, iso, idx) {
+  return '<div class="evrow">' +
+      '<span class="t">' + esc(ev.start) + ' – ' + esc(ev.end) + '</span>' +
+      '<span class="ttl">' + esc(ev.title || 'אירוע') + '</span>' +
+      '<button data-evcancel="' + idx + '" data-evdate="' + iso + '">בטל לשבוע זה</button>' +
+    '</div>';
+}
+
+/* אירוע שבוטל לשבוע מסוים — בראש היום, בלי שעה.
+   הזמן עצמו משוחרר לקביעה; ההערה כאן רק כדי שלא תתעורר השאלה
+   "למה פתאום פנוי ב-12:00". */
+function cancelledNoteHtml(ev, iso, idx) {
+  return '<div class="evcancelled">' +
+      '<span class="x">✕</span>' +
+      '<span class="ttl">' + esc(ev.title || 'אירוע') + ' — בוטל לשבוע זה</span>' +
+      '<button data-evrestore="' + idx + '" data-evdate="' + iso + '">החזר</button>' +
+    '</div>';
+}
+
+/* מפצל חלון פנוי לקטעים פנויים וקטעים חסומים, לפי רשת היחידות */
+function gapHtml(fromMin, toMinEnd, blocked, label) {
+  if (toMinEnd <= fromMin) return '';
+  if (!blocked || !blocked.size) return freeHtml(fromMin, toMinEnd);
+
+  const step = CFG.baseGridMin;
+  let out = '', segStart = fromMin, segBlocked = null;
+  for (let m = fromMin; m < toMinEnd; m += step) {
+    const b = blocked.has(pad(Math.floor(m/60)) + pad(m%60));
+    if (segBlocked === null) { segBlocked = b; segStart = m; }
+    else if (b !== segBlocked) {
+      out += segBlocked ? blockedHtml(segStart, m, label) : freeHtml(segStart, m);
+      segStart = m; segBlocked = b;
+    }
+  }
+  out += segBlocked ? blockedHtml(segStart, toMinEnd, label)
+                    : freeHtml(segStart, toMinEnd);
+  return out;
 }
 
 function freeHtml(fromMin, toMinEnd) {
@@ -1269,6 +1511,7 @@ const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יו
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
 
 function cardHtml(a) {
+  if (isRxTask(a)) return rxCardHtml(a);
   const st = statusOf(a), f = a.flags || {}, d = dateOf(a);
   const manual = a.source === 'manual';
   const svcName = CFG.serviceNames[a.service_code] || '—';
@@ -1365,6 +1608,47 @@ function cardHtml(a) {
     (badges.length ? '<div class="badges">'+badges.join('')+'</div>' : '') +
     copyBar +
     checks + '</div>';
+}
+
+/* ── כרטיס משימת מרשם ──────────────────────────────────────────────
+   בלי שעה, בלי "העתקה לאודורו", בלי צ'קבוקסים של מקדמה — כי אף אחד
+   מהם לא רלוונטי. יש שם, נייד, ההערה שעתליה כתבה, וסימון ביצוע.
+   ─────────────────────────────────────────────────────────────── */
+function rxCardHtml(a) {
+  const f = a.flags || {}, n = splitName(a), done = !!f.rx_done_at;
+  const phone = String(a.patient_phone || '');
+
+  const val = (v) => v
+    ? '<span class="v" data-copy="'+esc(v)+'" title="לחיצה מעתיקה">'+esc(v)+'</span>'
+    : '<span class="v none">—</span>';
+
+  return '<div class="card rx '+(done?'green':'orange')+'" data-card="'+a._id+'">' +
+    '<div class="hd">' +
+      '<span class="when">חידוש מרשם</span>' +
+      '<span class="name">ללא שעה · משימה</span>' +
+    '</div>' +
+    '<div class="fields">' +
+      '<div class="row">' +
+        '<span class="f"><span class="k">שם פרטי:</span>'  + val(n.first) + '</span>' +
+        '<span class="f"><span class="k">שם משפחה:</span>' + val(n.last)  + '</span>' +
+      '</div>' +
+      '<div class="row"><span class="f"><span class="k">נייד:</span>' + val(phone) +
+        (phone ? '<a class="tel" style="margin-inline-start:10px;font-size:14px" href="tel:'+esc(phone)+'">חיוג</a>' +
+                 '<a class="tel" style="margin-inline-start:8px;font-size:14px" href="https://wa.me/972'+
+                 esc(phone.replace(/^0/,''))+'" target="_blank" rel="noopener">ווטסאפ</a>' : '') +
+      '</span></div>' +
+      (a.patient_id_number ? '<div class="row"><span class="f"><span class="k">מספר זהות:</span>' +
+        val(a.patient_id_number) + '</span></div>' : '') +
+    '</div>' +
+    (a.staff_note ? '<div class="note"><b>הערת המרפאה:</b><br>'+esc(a.staff_note)+'</div>' : '') +
+    '<div class="checks">' +
+      (a.created_at ? doneRow('המשימה נרשמה', a.created_at) : '') +
+      chk(a._id, 'rx_done_at', 'המרשם חודש', f.rx_done_at) +
+    '</div>' +
+    '<div class="acts">' +
+      '<button data-act="cancel" data-id="'+a._id+'">ביטול משימה</button>' +
+    '</div>' +
+  '</div>';
 }
 
 /* שם פרטי ומשפחה.
@@ -1563,22 +1847,42 @@ function adsPending(list) {
   );
 }
 
-function adsCsv(rows) {
+/* עמודות הגיליון שגוגל אדס מושכת ממנו, בסדר קבוע.
+   כל שינוי כאן מחייב שינוי מקביל בגיליון ובמיפוי השדות בגוגל אדס. */
+const ADS_COLUMNS = [
+  'Google_Click_ID', 'GBRAID', 'WBRAID', 'Transaction_ID',
+  'Conversion_Name', 'Conversion_Time', 'Conversion_Value', 'Conversion_Currency'
+];
+
+function adsCsv(rows, withHeader) {
   const esc2 = (v) => {
     const s = String(v == null ? '' : v);
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
   };
-  const lines = [
-    'Parameters:TimeZone=Asia/Jerusalem',
-    ['Google Click ID','Conversion Name','Conversion Time',
-     'Conversion Value','Conversion Currency'].join(',')
-  ];
+  const lines = withHeader === false ? [] : [ADS_COLUMNS.join(',')];
+
   rows.forEach(a => {
+    /* ── שלוש עמודות, ערך אחד ────────────────────────────────────
+       gclid, gbraid ו-wbraid הם שלושה סוגי מזהה קליק, ולגוגל יש
+       עמודה נפרדת לכל אחד. הערך נכתב לעמודה שלו והשאר נשארות
+       ריקות. gbraid שנשלח בעמודת Google Click ID נדחה בשקט,
+       וזה בדיוק מה שהיה קורה לכל המרה ממשתמש אייפון.
+
+       תור ישן שנשמר לפני שהשדה הזה נוסף — נחשב gclid, כי זה
+       היה המזהה היחיד שהאפליקציה קלטה באותה תקופה. */
+    const t = a.click_id_type || 'gclid';
+    const val = ADS.value[a.visit_track] != null
+              ? ADS.value[a.visit_track] : ADS.value.new;
+
     lines.push([
-      esc2(a.gclid),
+      esc2(t === 'gclid'  ? a.gclid : ''),
+      esc2(t === 'gbraid' ? a.gclid : ''),
+      esc2(t === 'wbraid' ? a.gclid : ''),
+      // מזהה התור — מונע ספירה כפולה אם שורה נכנסת לגיליון פעמיים
+      esc2(a.id || a._id),
       esc2(ADS.conversionName),
       esc2(adsTime(stampOf(a.flags.paid_entered_at))),
-      esc2(ADS.value[a.visit_track] != null ? ADS.value[a.visit_track] : ADS.value.new),
+      esc2(val),
       esc2(ADS.currency)
     ].join(','));
   });
@@ -1593,11 +1897,12 @@ async function adsExport() {
   download('holland-conversions-' + iso + '.csv', adsCsv(rows));
 
   /* הסימון נעשה רק אחרי אישור מפורש, ולא אוטומטית עם ההורדה.
-     אם ההעלאה לגוגל תיכשל והתורים כבר סומנו — הם לא יופיעו שוב
+     אם ההוספה לגיליון תיכשל והתורים כבר סומנו — הם לא יופיעו שוב
      לעולם, וההמרות פשוט יאבדו בלי שאף אחד ידע. */
   if (!confirm('הקובץ ירד — ' + rows.length + ' המרות.\n\n' +
-               'העלה אותו לגוגל אדס, ורק אחרי שההעלאה הצליחה לחץ אישור.\n' +
-               'אישור יסמן את ההמרות כמועלות, והן לא יופיעו שוב.')) {
+               'הוסיפו את השורות בסוף הגיליון "Holland — Google Ads Conversions",\n' +
+               'ורק אחרי שהן שם לחצו אישור.\n\n' +
+               'גוגל מושכת מהגיליון פעם ביום. אין צורך להעלות דבר לגוגל אדס.')) {
     toast('הקובץ ירד. ההמרות לא סומנו — יופיעו שוב בפעם הבאה.');
     return;
   }
@@ -1651,7 +1956,7 @@ function paintAdsBanner() {
   if (!show) return;
 
   $('adsTitle').textContent =
-    rows.length + ' המרות ממתינות להעלאה לגוגל אדס';
+    rows.length + ' המרות ממתינות להוספה לגיליון';
   $('adsSub').textContent = last
     ? 'ההעלאה האחרונה: לפני ' + Math.floor(days) + ' ימים'
     : 'טרם בוצעה העלאה';
@@ -1744,6 +2049,14 @@ function openManual(from, preset) {
     '<label>מספר נייד</label><input id="mPhone" inputmode="numeric" value="'+esc(from?from.patient_phone:'')+'">' +
     '<div class="err" id="ePhone">מספר נייד לא תקין</div>' +
     '<label>מספר זהות (לא חובה)</label><input id="mId" inputmode="numeric" value="'+esc(from&&from.patient_id_number?from.patient_id_number:'')+'">' +
+    '<label class="chk rxchk"><input type="checkbox" id="mRx">' +
+      '<span>חידוש מרשם בלבד — משימה ללא שעה</span></label>' +
+    '<div id="mRxInfo" class="rxinfo" style="display:none"></div>' +
+    '<div id="mRxNoteWrap" style="display:none">' +
+      '<label>הערה לרופא (תרופה, תשלום, כל דבר אחר)</label>' +
+      '<textarea id="mRxNote" placeholder="למשל: סיאליס 5 מ״ג, שילם בביט"></textarea>' +
+    '</div>' +
+    '<div id="mTimed">' +
     '<label>סוג הביקור</label><select id="mDur">' +
       Object.entries(CFG.durations).map(([m,n]) =>
         '<option value="'+m+'"'+(String(m)===String(pick.duration)?' selected':'')+'>'+esc(n)+' · '+m+' דק׳</option>').join('') +
@@ -1755,6 +2068,7 @@ function openManual(from, preset) {
       '<span>לחרוג משעות הקבלה של אותו יום</span></label>' +
     '<div class="err" id="eSlot">נא לבחור שעה</div>' +
     '<label>הערה (לא חובה)</label><textarea id="mNote"></textarea>' +
+    '</div>' +
     '<button class="go" id="mSave">שמור תור</button>' +
     '<button class="cancel" id="mCancel">ביטול</button>' +
   '</div></div>';
@@ -1830,6 +2144,25 @@ function openManual(from, preset) {
     // אם השעה שנבחרה מהיומן כבר לא זמינה במשך שנבחר — מנקים אותה
     if (pick.time && !box.querySelector('[data-t="'+pick.time+'"]')) pick.time = null;
   };
+  /* מצב "חידוש מרשם בלבד" — אין תאריך לבחור ואין שעה. המשימה
+     נכנסת ליום העבודה הפתוח הבא, ובמקום בורר השעות מוצג לאן. */
+  let rxDay = null;
+  const paintRx = () => {
+    const on = $('mRx').checked;
+    $('mTimed').style.display      = on ? 'none' : '';
+    $('mRxNoteWrap').style.display = on ? '' : 'none';
+    $('mRxInfo').style.display     = on ? '' : 'none';
+    if (on) {
+      rxDay = nextWorkingDay(new Date());
+      $('mRxInfo').textContent =
+        'המשימה תופיע בלוז של יום ' + DOW[rxDay.getDay()] + ' ' +
+        rxDay.getDate() + '.' + (rxDay.getMonth()+1) +
+        ' — בראש היום, ללא שעה. לא תיגזר לאודורו.';
+    }
+  };
+  $('mRx').onchange = paintRx;
+  paintRx();
+
   $('mDur').onchange   = () => paintSlots();
   $('mDate').onchange  = () => paintSlots();
   $('mForce').onchange = () => paintSlots();
@@ -1841,13 +2174,26 @@ function openManual(from, preset) {
     const last  = $('mLast').value.trim();
     const phone = $('mPhone').value.replace(/\D/g,'');
     const idnum = $('mId').value.replace(/\D/g,'');
+    const isRx = $('mRx').checked;
     let bad = false;
     const mark = (id,on) => { $(id).classList.toggle('on',on); if(on) bad = true; };
     mark('eFirst', first.length < 2);
     mark('eLast',  last.length  < 2);
     mark('ePhone', !/^05\d{8}$/.test(phone));
-    mark('eSlot',  !pick.time);
+    mark('eSlot',  !isRx && !pick.time);   // למשימת מרשם אין שעה לבחור
     if (bad) return;
+
+    if (isRx) {
+      const btn = $('mSave'); btn.disabled = true; btn.textContent = 'שומר…';
+      const res = await createRxTask({
+        first, last, phone, idnum: idnum ? idnum.padStart(9,'0') : '',
+        note: $('mRxNote').value.trim(), when: rxDay || nextWorkingDay(new Date())
+      });
+      btn.disabled = false; btn.textContent = 'שמור תור';
+      if (res.ok) { close(); toast('המשימה נוספה ללוז'); }
+      else toast('השמירה נכשלה');
+      return;
+    }
 
     const [y,mo,dd] = pick.date.split('-').map(Number);
     const [h,mi]    = pick.time.split(':').map(Number);
@@ -1873,7 +2219,9 @@ window.HollandStaff = { CFG, TXT, state, statusOf, unitsOf, visible, render,
                         odoroFields, copyAct, copyStep, wire, waLink, WA,
                         windowFor, blockedFor, schedule, renderSettings,
                         cancelAppt, cancelWaKind, CANCEL_REASONS,
-                        ADS, adsPending, adsCsv, adsTime, paintAdsBanner,
+                        isRxTask, rxCardHtml, nextWorkingDay, createRxTask,
+                        eventsFor, evUnits,
+                        ADS, ADS_COLUMNS, adsPending, adsCsv, adsTime, paintAdsBanner,
                         ADS_LAST_KEY, ADS_SNOOZE_KEY,
                         setAppts: (x) => { appts = x; } };
 </script>
