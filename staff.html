@@ -1585,11 +1585,17 @@ function cardHtml(a) {
       '<div class="acts">' +
       wa(cancelWaKind(a),'💬 שלח הודעת ביטול','go') +
       '<button data-act="revive" data-id="'+a._id+'">החזרה ליומן</button></div>';
-  } else if (manual) {
+  /* כפתור ההעתקה לאודורו נעלם ברגע שהצ'קבוקס המאשר סומן. אחרי
+     שהתור כבר יושב באודורו, הכפתור אינו רק מיותר — הוא מזמין
+     העתקה שנייה ויצירת כפילות שם. */
+  const odoroBtn = (done) => done ? '' :
+    '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>';
+
+  if (manual) {
     checks = '<div class="checks">' + booked +
         chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
-        '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>' +
+        odoroBtn(f.copied_at) +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
   } else {
@@ -1597,9 +1603,14 @@ function cardHtml(a) {
         chk(a._id,'contacted_at',TXT.cb1,f.contacted_at) +
         chk(a._id,'paid_entered_at',TXT.cb2,f.paid_entered_at) +
       '</div><div class="acts">' +
-        (f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
-                        : wa('first','💬 הודעה ראשונה','go')) +
-        '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>' +
+        /* אחרי שהמקדמה שולמה אין כאן כפתור ווטסאפ. "תזכורת" הוא נוסח
+           שרודף אחרי מקדמה — "התור נשמר עד לקבלת המקדמה" בתוספת קישור
+           תשלום — ושליחתו למי שכבר שילם אומרת לו שלא קיבלנו את כספו.
+           לשיחה חופשית נשאר הקישור "ווטסאפ" שליד מספר הנייד. */
+        (f.paid_entered_at ? ''
+           : f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
+                            : wa('first','💬 הודעה ראשונה','go')) +
+        odoroBtn(f.paid_entered_at) +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">'+esc(TXT.cb3)+'</button></div>';
   }
@@ -2051,8 +2062,12 @@ function wire(host) {
       }
     });
   });
-  // שמירת מצב סרגל ההעתקה בין רינדורים (למשל כשמגיע עדכון realtime)
+  // שמירת מצב סרגל ההעתקה בין רינדורים (למשל כשמגיע עדכון realtime).
+  // אבל ברגע שהצ'קבוקס המאשר סומן — הסרגל נסגר ולא חוזר. בלי זה הוא
+  // היה צץ מחדש אחרי כל רינדור, כולל עדכון שהגיע ממכשיר אחר.
   Object.keys(copyStep).forEach(id => {
+    const ap = appts.find(x => x._id === id), fl = (ap && ap.flags) || {};
+    if (fl.paid_entered_at || fl.copied_at) { copyStep[id] = 0; return; }
     if (copyStep[id] > 0 && host.querySelector('[data-bar="'+id+'"]')) paintCopyBar(id);
   });
 }
