@@ -1575,6 +1575,12 @@ function cardHtml(a) {
     (kind === 'first' ? ' data-mark="'+a._id+'"' : '') +
     ' target="_blank" rel="noopener">' + esc(label) + '</a>';
 
+  /* כפתור ההעתקה לאודורו נעלם ברגע שהצ'קבוקס המאשר סומן. אחרי
+     שהתור כבר יושב באודורו, הכפתור אינו רק מיותר — הוא מזמין
+     העתקה שנייה ויצירת כפילות שם. */
+  const odoroBtn = (done) => done ? '' :
+    '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>';
+
   if (a.status === 'cancelled') {
     if (a.cancel_reason)
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
@@ -1585,13 +1591,7 @@ function cardHtml(a) {
       '<div class="acts">' +
       wa(cancelWaKind(a),'💬 שלח הודעת ביטול','go') +
       '<button data-act="revive" data-id="'+a._id+'">החזרה ליומן</button></div>';
-  /* כפתור ההעתקה לאודורו נעלם ברגע שהצ'קבוקס המאשר סומן. אחרי
-     שהתור כבר יושב באודורו, הכפתור אינו רק מיותר — הוא מזמין
-     העתקה שנייה ויצירת כפילות שם. */
-  const odoroBtn = (done) => done ? '' :
-    '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>';
-
-  if (manual) {
+  } else if (manual) {
     checks = '<div class="checks">' + booked +
         chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
