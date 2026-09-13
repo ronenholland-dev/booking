@@ -57,8 +57,14 @@ j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNo
 :root{
   --navy:#2b3a5c;
   --navy-dark:#22304c;
-  --sage:#7ba39b;
-  --sage-hover:#6d938b;
+  /* ── ירוק המותג ──────────────────────────────────────────────────
+     הגוון המקורי היה #7ba39b. עם טקסט לבן עליו יחס הניגודיות הוא
+     2.78:1 — נכשל גם בסף המקל של WCAG לטקסט גדול (3:1) וגם בסף
+     לטקסט רגיל (4.5:1). הגוון הנוכחי נותן 4.8:1 ועובר את שניהם.
+     הגוון משמש לכפתורים, לימים פנויים בלוח, לסלוטים ולעיגול האישור —
+     כלומר בכל מקום שבו יושב עליו טקסט לבן. */
+  --sage:#4f7a71;
+  --sage-hover:#43665f;
   --mint:#dff0ec;
   --grey:#d8d8d8;
   --grey-text:#8b8b8b;
@@ -146,6 +152,13 @@ h2{font-size:20px;font-weight:700;color:var(--navy);margin:0 0 6px}
 }
 .cal-day.free{background:var(--sage);color:#fff;cursor:pointer;font-weight:700}
 .cal-day.free:hover{background:var(--sage-hover)}
+/* בזמן טעינת הזמינות — הלוח עמום ואינו ניתן ללחיצה, כדי שלא ייראה
+   כאילו כל הימים פנויים לפני שהנתונים הגיעו */
+.cal-grid.cal-loading{opacity:.45;pointer-events:none}
+.cal-note{margin:10px 0 0;font-size:14px;color:var(--muted);text-align:center}
+@media (prefers-reduced-motion:no-preference){
+  .cal-grid.cal-loading{transition:opacity .15s}
+}
 .cal-day.sel{background:var(--navy);color:#fff;font-weight:700}
 .cal-day.blank{background:transparent}
 
@@ -245,8 +258,12 @@ const TEXTS = {
     followUp:     'ביקורת',
     prescription: 'חידוש מרשם',
     contactLabel: 'דרכים נוספות ליצירת קשר',
-    waText:       'הודעת ווטסאפ למרפאה',
-    waVoice:      'הודעה קולית בווטסאפ',
+    /* כפתור אחד ולא שניים. קודם היו "הודעת ווטסאפ" ו"הודעה קולית",
+       שניהם מובילים לאותו צ'אט — וההבטחה של "הודעה קולית" לא ניתנת
+       למימוש: ווטסאפ אינו נפתח במצב הקלטה מקישור. המטופל בוחר בעצמו
+       בתוך הצ'אט אם לכתוב או להקליט. אירוע המדידה: contact_click
+       עם channel='whatsapp' (במקום whatsapp_text / whatsapp_voice). */
+    wa:           'פנייה למרפאה בווטסאפ',
     maccabi:      'לקביעת תור דרך מכבי יש להשתמש באפליקציית מכבי'
   },
 
@@ -275,6 +292,10 @@ const TEXTS = {
     pickDay:    'בחרו יום מהלוח כדי לראות שעות פנויות',
     slotsFor:   'תורים זמינים ליום',      // + "שני 13.7"
     noSlots:    'אין שעות פנויות ביום זה. אנא בחרו יום אחר.',
+    loading:    'טוען זמינות…',
+    greyNote:   'ימים בהירים אינם זמינים לקביעת תור',
+    prevMonth:  'החודש הקודם',
+    nextMonth:  'החודש הבא',
     cta:        'המשך למילוי פרטים',
     slotGone:   'מצטערים, השעה הזו נתפסה כרגע על ידי מטופל אחר. הלוח עודכן — אנא בחרו שעה אחרת.'
   },
@@ -307,7 +328,9 @@ const TEXTS = {
     topicLbl: 'נושא:'
   },
 
-  back: '← חזרה',
+  /* בממשק עברי "חזרה" מצביע ימינה — לכיוון תחילת הקריאה. לוח השנה
+     כבר נהג נכון (› לחודש הקודם), והחץ כאן היה היחיד שסתר את זה. */
+  back: '→ חזרה',
 
   /* ── שמות הימים והחודשים ── */
   dowShort:  ['א','ב','ג','ד','ה','ו','ש'],
@@ -369,14 +392,14 @@ const CONFIG = {
            btn:     'שיפור התפקוד המיני',
            topic:   'שיפור התפקוד המיני',
            includes:['בירור מקיף של ההפרעה של התפקוד המיני, אולטרסאונד של הפין (לפי הצורך), התאמת הטיפול, ליווי למשך חצי שנה'],
-           priceLbl:'מחיר הייעוץ- 2,000 ₪', priceNote:'' },
+           priceLbl:'מחיר הייעוץ: 2,000 ₪', priceNote:'' },
 
     STD: { code:'B', durationMin:30, track:'new',
            hdrSub:  'ביקור חדש – מחלות מין (STD)',
            btn:     'אבחון מהיר וטיפול מיידי במחלות מין',
            topic:   'אבחון מהיר וטיפול מיידי במחלות מין',
            includes:['אבחון מהיר בעזרת בדיקות דם ושתן, טיפול אנטיביוטי מיידי לפי התוצאות ובקורת לפי הצורך.'],
-           priceLbl:'מחיר הייעוץ- 1,800 ₪', priceNote:'' },
+           priceLbl:'מחיר הייעוץ: 1,800 ₪', priceNote:'' },
 
     CON: { code:'C', durationMin:30, track:'new',
            hdrSub:  'ביקור חדש – קונדילומה',
@@ -385,14 +408,14 @@ const CONFIG = {
            includes:['אבחון של הנגעים.',
                      'צריבה יסודית של הנגעים ופיקוח ביקורת לפי הצורך למשך חצי שנה.',
                      'סיוע במתן חיסון נגד פפילומה.'],
-           priceLbl:'מחיר הטיפול- 3,000-5,000 ₪', priceNote:'לפי כמות ופיזור הנגעים' },
+           priceLbl:'מחיר הטיפול: 3,000–5,000 ₪', priceNote:'לפי כמות ופיזור הנגעים' },
 
     URO: { code:'D', durationMin:30, track:'new',
            hdrSub:  'ביקור חדש – ייעוץ אורולוגי כללי',
            btn:     'ייעוץ מומחה בנושאים אורולוגיים',
            topic:   'ייעוץ מומחה בנושאים אורולוגיים',
            includes:['בירור מקיף של ההפרעה האורולוגית, בדיקת שתן מהירה, אולטרסאונד (לפי הצורך), התאמת הטיפול, ליווי למשך חצי שנה'],
-           priceLbl:'מחיר הייעוץ- 2,000 ₪', priceNote:'' },
+           priceLbl:'מחיר הייעוץ: 2,000 ₪', priceNote:'' },
 
     /* ביקורת וחידוש מרשם — ללא מסך מחיר; המחיר נקבע ע"י הצוות. */
     REV_F: { code:'R', durationMin:20, track:'follow', topic:'ביקורת — פרונטלי' },
@@ -1008,6 +1031,11 @@ const state = {
   form:        { first:'', last:'', phone:'', idnum:'', note:'' },
   txId:        null,
   busy:        new Map(),  // dateIso → Set של יחידות תפוסות
+  /* חודשים שהתפוסה שלהם כבר נטענה מ-Firestore, כ-'YYYY-M'.
+     קריטי: לפני הטעינה state.busy ריק, ולכן חישוב הזמינות היה מתבצע
+     כאילו אין אף תור תפוס — וימים מלאים היו נצבעים ירוקים וניתנים
+     ללחיצה לכמה מאות מילישניות. מטופל שהספיק ללחוץ קיבל יום ריק. */
+  monthsReady: new Set(),
   holdId:      null,       // מזהה השמירה הזמנית הפעילה
   heldDate:    null,
   heldUnits:   null
@@ -1063,8 +1091,7 @@ function drawVisitType() {
     <button class="btn btn-primary" data-go="RX">${esc(T.s1.prescription)}</button>
     <div class="rule"></div>
     <div class="section-label">${esc(T.s1.contactLabel)}</div>
-    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" data-contact="whatsapp_text" style="text-decoration:none">${esc(T.s1.waText)}</a>
-    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" data-contact="whatsapp_voice" style="text-decoration:none">${esc(T.s1.waVoice)}</a>
+    <a class="btn btn-ghost" href="${wa}" target="_blank" rel="noopener" data-contact="whatsapp" style="text-decoration:none">${esc(T.s1.wa)}</a>
     <div class="note-box">${esc(T.s1.maccabi)}</div>
   `;
   // יציאה לערוץ אחר — נמדדת לפני שהדפדפן עוזב את הדף
@@ -1169,17 +1196,30 @@ function drawCalendar() {
 
 /* טוענת את התפוסה לחודש המוצג ומציירת מחדש. נכשלת בשקט —
    אם Firestore לא זמין, הלוח עדיין מוצג לפי שעות הפעילות. */
+const monthKey = (d) => d.getFullYear() + '-' + d.getMonth();
+
 async function loadMonth() {
-  if (CONFIG.demoMode) return;
   const m = state.calMonth;
+  /* במצב דמו אין מה לטעון, אבל הלוח חייב להיות שמיש */
+  if (CONFIG.demoMode) {
+    state.monthsReady.add(monthKey(m));
+    if (state.screen === 's4') { paintMonth(); paintSlots(); }
+    return;
+  }
   const from = Cal.iso(new Date(m.getFullYear(), m.getMonth(), 1));
   const to   = Cal.iso(new Date(m.getFullYear(), m.getMonth()+1, 0));
   try {
     const [map, sch] = await Promise.all([Store.range(from, to), Store.schedule(from, to)]);
     map.forEach((v, k) => state.busy.set(k, v));
     if (sch) Cal.setSchedule(sch);
+  } catch (e) {
+    Debug.log('טעינת זמינות נכשלה', String(e));
+    /* נכשל בשקט ונופל חזרה לשעות הפעילות בלבד — כפי שהיה תמיד.
+       מסמנים ready בכל מקרה, אחרת הלוח היה נשאר נעול לתמיד. */
+  } finally {
+    state.monthsReady.add(monthKey(m));
     if (state.screen === 's4') { paintMonth(); paintSlots(); }
-  } catch (e) { Debug.log('טעינת זמינות נכשלה', String(e)); }
+  }
 }
 
 /* מעבר למסך הפרטים — כאן נשמר הסלוט זמנית, פעם אחת */
@@ -1226,26 +1266,33 @@ function paintMonth() {
   const prevOk = first > thisMonth;
   const nextOk = new Date(m.getFullYear(), m.getMonth()+1, 1) <= maxD;
 
+  /* עד שהתפוסה של החודש נטענה — אף יום אינו ניתן לבחירה. בלי זה
+     הזמינות מחושבת מול state.busy ריק, כלומר כאילו היומן פנוי לגמרי. */
+  const ready = state.monthsReady.has(monthKey(m));
+
   let cells = '';
   for (let i = 0; i < first.getDay(); i++) cells += '<div class="cal-day blank"></div>';
   for (let d = 1; d <= days; d++) {
     const date = new Date(m.getFullYear(), m.getMonth(), d);
     const inRange = date >= today && date <= maxD;
-    const free = inRange && Cal.hasFree(date, dur, state.busy.get(Cal.iso(date)));
+    const free = ready && inRange && Cal.hasFree(date, dur, state.busy.get(Cal.iso(date)));
     const sel  = state.selDate && Cal.iso(state.selDate) === Cal.iso(date);
     cells += `<button class="cal-day ${free?'free':''} ${sel?'sel':''}" ${free?'':'disabled'} data-d="${d}">${d}</button>`;
   }
 
   document.getElementById('cal').innerHTML = `
     <div class="cal-nav">
-      <button id="cPrev" ${prevOk?'':'disabled'}>›</button>
+      <button id="cPrev" ${prevOk?'':'disabled'}
+        aria-label="${esc(T.s4.prevMonth)}" title="${esc(T.s4.prevMonth)}">›</button>
       <div class="month">${esc(T.months[m.getMonth()])} ${m.getFullYear()}</div>
-      <button id="cNext" ${nextOk?'':'disabled'}>‹</button>
+      <button id="cNext" ${nextOk?'':'disabled'}
+        aria-label="${esc(T.s4.nextMonth)}" title="${esc(T.s4.nextMonth)}">‹</button>
     </div>
-    <div class="cal-grid">
+    <div class="cal-grid${ready?'':' cal-loading'}">
       ${T.dowShort.map(d => '<div class="cal-dow">'+esc(d)+'</div>').join('')}
       ${cells}
     </div>
+    <p class="cal-note">${esc(ready ? T.s4.greyNote : T.s4.loading)}</p>
   `;
   const pv = document.getElementById('cPrev'), nx = document.getElementById('cNext');
   if (prevOk) pv.onclick = () => { state.calMonth = new Date(m.getFullYear(), m.getMonth()-1, 1); paintMonth(); loadMonth(); };
