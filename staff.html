@@ -984,9 +984,15 @@ async function rescheduleAppt(appt, data) {
 
       const target = sameDay ? oldUnitsMap
                              : (newSnap.exists() ? Object.assign({}, newSnap.data().units || {}) : {});
+      /* ⚠️ חובה להתעלם משמירה זמנית שפג תוקפה. מטופל שהתחיל לקבוע
+         ונטש משאיר ב-day_slots רשומה עם חותמת פקיעה; קוד קביעת התור
+         באפליקציה מדלג עליה, וכאן היא נחשבה בטעות ל"תפוס" וחסמה את
+         הצוות. זה קרה בפועל ב-14.9.2026: הזזה נדחתה בגלל נטישה
+         מלפני שעתיים, בלי שום הסבר למשתמש. */
+      const live = (v) => v && (!v.e || v.e > Date.now());
       for (const k of newUnits) {
         const v = target[k];
-        if (v && v.a !== appt._id) throw new Error('SLOT_TAKEN');
+        if (live(v) && v.a !== appt._id) throw new Error('SLOT_TAKEN');
       }
       newUnits.forEach(k => { target[k] = { a: appt._id, e: null }; });
 
