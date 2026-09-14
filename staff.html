@@ -443,9 +443,11 @@ const CFG = {
      20 דקות, ומי שקבע ביקורת פרונטלית קצרה בחר בה באופן טבעי וקיבל
      סלוט כפול מהנדרש. עשר דקות פנויות שהמערכת לא הציעה לאיש.
      לכן המשך מופיע ראשון, והתיאור הוא רמז ולא כלל. */
-  durations: { 30:'30 דק׳ — ביקור חדש',
+  durations: { 10:'10 דק׳ — ביקורת קצרה, טלפוני או מרשם',
                20:'20 דק׳ — ביקורת פרונטלי',
-               10:'10 דק׳ — ביקורת קצרה, טלפוני או מרשם' },
+               30:'30 דק׳ — ביקור חדש',
+               40:'40 דק׳ — טיפול או פעולה',
+               60:'60 דק׳ — פעולה ארוכה' },
   serviceNames: { A:'שיפור התפקוד המיני', B:'מחלות מין (STD)', C:'קונדילומה',
                   D:'ייעוץ אורולוגי כללי', R:'ביקורת', P:'חידוש מרשם' }
 };
@@ -941,6 +943,83 @@ async function createRxTask(data) {
 
 /* תור ידני / תור המשך — אותה נעילה אטומית בדיוק כמו בזרימת המטופל.
    זה מה שמונע התנגשות בין תור שהצוות מזין לתור שנקבע במקביל. */
+/* ══════════════════════════════════════════════════════════════════
+   הזזת תור קיים — התאמה לאודורו
+   ─────────────────────────────────────────────────────────────────
+   התרחיש: מטופל שילם מקדמה ואז ביקש להזיז. המועד החדש פנוי באודורו,
+   הצוות קובע אותו שם — ובבוקינג הסלוט הישן נשאר תפוס. סלוט שהתפנה
+   בפועל ואף מטופל אינו יכול לבחור בו.
+
+   אודורו הוא תמיד הקובע, ולכן הפעולה הזו חייבת להצליח גם על שעה
+   שבוקינג חוסם — אדמין, מחוץ לשעות הקבלה, יום סגור. לשם כך קיימת
+   החריגה המודעת, בדיוק כמו בקביעה ידנית.
+
+   מה שנשמר: הסטטוס, הצ'קבוקסים, חותמות הזמן, המקדמה, הייחוס לגוגל.
+   מה שמשתנה: מועד, משך, ותיעוד ההזזה. ─────────────────────────── */
+async function rescheduleAppt(appt, data) {
+  const oldIso   = isoOf(dateOf(appt));
+  const oldUnits = unitsOf(appt);
+  const newIso   = isoOf(data.when);
+  const newUnits = [];
+  const start = data.when.getHours()*60 + data.when.getMinutes();
+  for (let m = start; m < start + data.duration; m += CFG.baseGridMin)
+    newUnits.push(pad(Math.floor(m/60)) + pad(m%60));
+
+  const apptRef = doc(db, 'appointments', appt._id);
+  const oldRef  = doc(db, 'day_slots', oldIso);
+  const newRef  = doc(db, 'day_slots', newIso);
+  const sameDay = oldIso === newIso;
+
+  try {
+    await runTransaction(db, async (tx) => {
+      /* כל הקריאות לפני כל הכתיבות — דרישה של Firestore */
+      const oldSnap = await tx.get(oldRef);
+      const newSnap = sameDay ? oldSnap : await tx.get(newRef);
+      const aSnap   = await tx.get(apptRef);
+      if (!aSnap.exists()) throw new Error('APPT_GONE');
+
+      const oldUnitsMap = oldSnap.exists() ? Object.assign({}, oldSnap.data().units || {}) : {};
+      // משחררים רק יחידות ששייכות לתור הזה — לא נוגעים בשל אחרים
+      oldUnits.forEach(k => { if (oldUnitsMap[k] && oldUnitsMap[k].a === appt._id) delete oldUnitsMap[k]; });
+
+      const target = sameDay ? oldUnitsMap
+                             : (newSnap.exists() ? Object.assign({}, newSnap.data().units || {}) : {});
+      for (const k of newUnits) {
+        const v = target[k];
+        if (v && v.a !== appt._id) throw new Error('SLOT_TAKEN');
+      }
+      newUnits.forEach(k => { target[k] = { a: appt._id, e: null }; });
+
+      const prev = aSnap.data();
+      const moves = Array.isArray(prev.moves) ? prev.moves.slice() : [];
+      moves.push({
+        from: prev.slot_start, from_min: prev.slot_duration_min || null,
+        to: Timestamp.fromDate(data.when), to_min: data.duration,
+        at: Timestamp.now(),
+        by: auth.currentUser ? auth.currentUser.email : null
+      });
+
+      if (sameDay) {
+        tx.set(oldRef, { date: oldIso, units: target }, { merge: true });
+      } else {
+        tx.set(oldRef, { date: oldIso, units: oldUnitsMap }, { merge: true });
+        tx.set(newRef, { date: newIso, units: target },      { merge: true });
+      }
+      tx.update(apptRef, {
+        slot_start:        Timestamp.fromDate(data.when),
+        slot_duration_min: data.duration,
+        off_hours:         !!data.offHours,
+        moves,
+        updated_at:        Timestamp.now()
+      });
+    });
+    return { ok: true };
+  } catch (e) {
+    const taken = String(e).includes('SLOT_TAKEN');
+    return { ok: false, taken, msg: String(e && e.message || e) };
+  }
+}
+
 async function createManual(data) {
   const dIso = isoOf(data.when), units = [];
   const start = data.when.getHours()*60 + data.when.getMinutes();
@@ -1596,6 +1675,12 @@ function cardHtml(a) {
   const odoroBtn = (done) => done ? '' :
     '<button class="primary" data-act="odoro" data-id="'+a._id+'">📋 העתקה לאודורו</button>';
 
+  /* עדכון מועד — זמין תמיד, גם אחרי שהתור ירוק ויצא מ"לטיפול".
+     מטופל ששילם מקדמה מבקש להזיז, הצוות מזיז באודורו, וכאן מתאימים.
+     בלי זה הסלוט הישן נשאר תפוס בבוקינג אף שהתפנה בפועל. */
+  const moveBtn = (a.status === 'cancelled' || isRxTask(a)) ? '' :
+    '<button data-act="move" data-id="'+a._id+'">🕐 עדכון מועד</button>';
+
   if (a.status === 'cancelled') {
     if (a.cancel_reason)
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
@@ -1611,6 +1696,7 @@ function cardHtml(a) {
         chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
         odoroBtn(f.copied_at) +
+        moveBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
   } else {
@@ -1626,6 +1712,7 @@ function cardHtml(a) {
            : f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
                             : wa('first','💬 הודעה ראשונה','go')) +
         odoroBtn(f.paid_entered_at) +
+        moveBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">'+esc(TXT.cb3)+'</button></div>';
   }
@@ -2055,6 +2142,7 @@ function wire(host) {
     const a = appts.find(x => x._id === b.dataset.id);
     if (!a) return;
     b.onclick = () => ({ cancel:cancelAppt, revive:reviveAppt, follow:openManual,
+                         move:(x)=>openManual(x, null, 'move'),
                          odoro:(x)=>copyAct('open', x._id) }[b.dataset.act])(a);
   });
   // לחיצה על ערך בודד מעתיקה רק אותו
@@ -2091,27 +2179,40 @@ function wire(host) {
    7. תור ידני / תור המשך
    כשמגיעים מכרטיס קיים — פרטי המטופל מועתקים אוטומטית, בלי הקלדה.
    ══════════════════════════════════════════════════════════════════ */
-function openManual(from, preset) {
-  const pick = { date: (preset && preset.date) || isoOf(state.day),
-                 time: (preset && preset.time) || null,
-                 duration: 20 };
+function openManual(from, preset, mode) {
+  /* mode === 'move' — הזזת תור קיים במקום יצירת חדש. אותו חלון בדיוק,
+     כדי שלוגיקת בחירת השעות תישאר במקום אחד. שכפול שלה היה מזמין
+     סטייה בין שני המסלולים, וזה בדיוק סוג הבאג שכבר נשרפנו בו. */
+  const moving = mode === 'move' ? from : null;
+  const cur    = moving ? dateOf(moving) : null;
+
+  const pick = { date: moving ? isoOf(cur) : ((preset && preset.date) || isoOf(state.day)),
+                 time: moving ? hhmmOf(cur) : ((preset && preset.time) || null),
+                 duration: moving ? (moving.slot_duration_min || 20) : 20 };
   const host = $('modalHost');
 
   host.innerHTML =
   '<div class="modal"><div class="sheet">' +
-    '<h2>'+(from ? 'תור המשך' : 'הוספת תור ידנית')+'</h2>' +
-    '<div class="sub">'+(from ? 'הפרטים הועתקו מ'+esc(from.patient_name)
-                              : 'התור ייפתח במצב מטופל — הצוות כבר סגר את הפרטים')+'</div>' +
-    '<div class="row">' +
+    '<h2>'+(moving ? 'עדכון מועד התור' : from ? 'תור המשך' : 'הוספת תור ידנית')+'</h2>' +
+    '<div class="sub">'+(
+      moving ? esc(moving.patient_name) + ' · כעת ' +
+               DOW[cur.getDay()] + ' ' + cur.getDate() + '.' + (cur.getMonth()+1) +
+               ' בשעה ' + hhmmOf(cur) + ' · ' + (moving.slot_duration_min||0) + ' דק׳<br>' +
+               'אודורו הוא הקובע — כאן מתאימים את בוקינג אליו. המקדמה, הסימונים והייחוס נשמרים.'
+             : from ? 'הפרטים הועתקו מ'+esc(from.patient_name)
+                    : 'התור ייפתח במצב מטופל — הצוות כבר סגר את הפרטים')+'</div>' +
+    '<div class="row"'+(moving?' style="display:none"':'')+'>' +
       '<div><label>שם פרטי</label><input id="mFirst" value="'+esc(from?splitName(from).first:'')+'">' +
         '<div class="err" id="eFirst">נא למלא שם פרטי</div></div>' +
       '<div><label>שם משפחה</label><input id="mLast" value="'+esc(from?splitName(from).last:'')+'">' +
         '<div class="err" id="eLast">נא למלא שם משפחה</div></div>' +
     '</div>' +
+    '<div'+(moving?' style="display:none"':'')+'>' +
     '<label>מספר נייד</label><input id="mPhone" inputmode="numeric" value="'+esc(from?from.patient_phone:'')+'">' +
     '<div class="err" id="ePhone">מספר נייד לא תקין</div>' +
     '<label>מספר זהות (לא חובה)</label><input id="mId" inputmode="numeric" value="'+esc(from&&from.patient_id_number?from.patient_id_number:'')+'">' +
-    '<label class="chk rxchk"><input type="checkbox" id="mRx">' +
+    '</div>' +
+    '<label class="chk rxchk"'+(moving?' style="display:none"':'')+'><input type="checkbox" id="mRx">' +
       '<span>חידוש מרשם בלבד — משימה ללא שעה</span></label>' +
     '<div id="mRxInfo" class="rxinfo" style="display:none"></div>' +
     '<div id="mRxNoteWrap" style="display:none">' +
@@ -2177,7 +2278,11 @@ function openManual(from, preset) {
     // תפוסה נגזרת מהתורים שכבר טעונים למסך — מספיק להצגה,
     // והנעילה עצמה נבדקת שוב בטרנזקציה בעת השמירה.
     const busy = new Set();
-    appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === pick.date)
+    appts.filter(a => a.status !== 'cancelled' && isoOf(dateOf(a)) === pick.date
+                   /* בהזזה — הסלוט של התור עצמו אינו "תפוס" מבחינתו.
+                      בלי החרגה זו אי אפשר היה לקצר תור מ-20 ל-10 דקות
+                      באותה שעה, כי הוא היה חוסם את עצמו. */
+                   && !(moving && a._id === moving._id))
          .forEach(a => unitsOf(a).forEach(u => busy.add(u)));
     // חסימות ידניות ממסך ההגדרות. חריגה מודעת גוברת גם עליהן —
     // אחרת אי אפשר לדחוף מטופל לחלון שנחסם להפסקה.
@@ -2232,7 +2337,27 @@ function openManual(from, preset) {
   paintSlots(true);
   window.__manualRepaint = paintSlots;   // לבדיקות
 
+  if (moving) $('mSave').textContent = 'עדכן מועד';
+
   $('mSave').onclick = async () => {
+    /* ── הזזת תור קיים ─────────────────────────────────────────────
+       אין כאן ולידציה על פרטי מטופל: הם לא נערכים, רק המועד. */
+    if (moving) {
+      $('eSlot').classList.toggle('on', !pick.time);
+      if (!pick.time) return;
+      const [Y,M,D] = pick.date.split('-').map(Number);
+      const [H,Mi]  = pick.time.split(':').map(Number);
+      const when = new Date(Y, M-1, D, H, Mi, 0, 0);
+      const btn = $('mSave'); btn.disabled = true; btn.textContent = 'מעדכן…';
+      const res = await rescheduleAppt(moving, {
+        when, duration: +$('mDur').value, offHours: $('mForce').checked
+      });
+      btn.disabled = false; btn.textContent = 'עדכן מועד';
+      if (res.ok) { close(); toast('המועד עודכן והסלוט הישן שוחרר'); }
+      else toast(res.taken ? 'השעה נתפסה בינתיים — בחרו אחרת' : 'העדכון נכשל');
+      return;
+    }
+
     const first = $('mFirst').value.trim();
     const last  = $('mLast').value.trim();
     const phone = $('mPhone').value.replace(/\D/g,'');
