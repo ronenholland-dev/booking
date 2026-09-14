@@ -999,11 +999,16 @@ async function rescheduleAppt(appt, data) {
         by: auth.currentUser ? auth.currentUser.email : null
       });
 
+      /* ⚠️ בלי merge, וזה קריטי. עם {merge:true} מיזוג Firestore מוסיף
+         ומעדכן מפתחות בלבד — מחיקת מפתח מהאובייקט המקומי אינה מגיעה
+         לשרת. התוצאה: היחידה הישנה נשארת תפוסה לנצח, בלי תור מאחוריה,
+         והסלוט אבוד. זה קרה בפועל ב-14.9.2026 בסנכרון מול אודורו.
+         כאן נכתבת המפה השלמה, ולכן מחיקה באמת מוחקת. */
       if (sameDay) {
-        tx.set(oldRef, { date: oldIso, units: target }, { merge: true });
+        tx.set(oldRef, { date: oldIso, units: target });
       } else {
-        tx.set(oldRef, { date: oldIso, units: oldUnitsMap }, { merge: true });
-        tx.set(newRef, { date: newIso, units: target },      { merge: true });
+        tx.set(oldRef, { date: oldIso, units: oldUnitsMap });
+        tx.set(newRef, { date: newIso, units: target });
       }
       tx.update(apptRef, {
         slot_start:        Timestamp.fromDate(data.when),
