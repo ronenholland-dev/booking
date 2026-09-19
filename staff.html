@@ -258,6 +258,15 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .adminrow .ahint{font-size:12.5px;color:var(--muted)}
 .freednote .ttl{flex:0 0 auto;text-decoration:none;font-weight:600;color:var(--navy)}
 .freednote button{font:600 13px inherit}
+/* אזהרת חסימה כפולה — צהוב ולא אדום: אין תקלה כרגע, יש מוקש */
+.dupnote{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:13px;
+  padding:11px 14px;border-radius:var(--radius);
+  background:#fdf6e6;border:1px solid #e6cf9a}
+.dupnote .w{color:#9a6b12;font-weight:700;font-size:16px}
+.dupnote .tx{flex:1;min-width:220px;color:#6b5320;font-size:14px;line-height:1.55}
+.dupnote button{background:#fff;border:1px solid #d9b978;color:#6b5320;
+  border-radius:8px;padding:7px 13px;font:700 13.5px inherit;cursor:pointer}
+.dupnote button:hover{background:#f7ecd4}
 /* אירוע שבוטל לשבוע זה — בראש היום, בלי שעה */
 .evcancelled{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   margin-bottom:13px;padding:10px 14px;border-radius:var(--radius);
@@ -1562,6 +1571,7 @@ function paintTimeline() {
     if (ev.cancelled) html += cancelledNoteHtml(ev, iso, i);
   });
   html += freedNoteHtml(schedule.overrides[iso], iso);
+  html += dupNoteHtml(schedule.overrides[iso], d, iso);
 
   /* משימות חידוש מרשם — בראש היום, בלי שעה ולפני ציר הזמן.
      הן אינן משתתפות בציר עצמו כי אין להן מיקום בו. */
@@ -1581,10 +1591,25 @@ function paintTimeline() {
   const closeM = w ? toMin(w.close) : null;
   const startOf = (a) => { const t = dateOf(a); return t.getHours()*60 + t.getMinutes(); };
   const blocked = blockedFor(d);
-  /* ברירת המחדל לרצועה חסומה ביום שיש בו אירוע היא "חיץ" ולא שם
-     האירוע — אחרת 11:40 היה נראה כשעת הפגישה, והמטרה כאן הפוכה. */
-  const blockLabel = (schedule.overrides[iso] || {}).blocked_label ||
-                     (eventsFor(d).some(e => !e.cancelled) ? 'חיץ' : null);
+
+  /* ── מאיפה מגיעה התווית של רצועה חסומה ──────────────────────────
+     קודם כאן ישבה נפילה לברירת מחדל: כל רצועה חסומה ביום שיש בו
+     אירוע פעיל תויגה "חיץ". זה היה שגוי ומטעה — שארית חסימה ישנה
+     שאין לה שום קשר לאירוע נקראה "חיץ" וגררה חיפוש אחרי פגישה
+     שאינה קיימת. זה בדיוק מה שהטעה אותנו ב-17.9 וב-29.9.
+
+     עכשיו התווית נגזרת ליחידה ולא ליום: יחידה שהיא באמת חיץ של
+     אירוע פעיל נקראת "חיץ", וכל השאר "זמן חסום". ─────────────── */
+  const bufUnits = new Set();
+  eventsFor(d).forEach(ev => {
+    if (ev.cancelled || !ev.start || !ev.end) return;
+    const s = toMin(ev.start), e = toMin(ev.end);
+    const f = s - (ev.buffer_before_min || 0), t = e + (ev.buffer_after_min || 0);
+    for (let m = Math.max(0, f); m < t; m += CFG.baseGridMin)
+      if (m < s || m >= e) bufUnits.add(unitOf(m));
+  });
+  const ovDoc = schedule.overrides[iso] || {};
+  const labelFor = (u) => bufUnits.has(u) ? 'חיץ' : (ovDoc.blocked_label || 'זמן חסום');
 
   /* תורים שנקבעו מחוץ לשעות הפעילות מוצגים בנפרד, כדי שלא ייעלמו.
      משימות מרשם אינן משתתפות — הן כבר הוצגו בראש היום, ואין להן
@@ -1616,7 +1641,7 @@ function paintTimeline() {
         continue;
       }
       const gapEnd = next ? Math.min(next.at, closeM) : closeM;
-      if (gapEnd > cursor) html += gapHtml(cursor, gapEnd, blocked, blockLabel);
+      if (gapEnd > cursor) html += gapHtml(cursor, gapEnd, blocked, labelFor);
       cursor = gapEnd;
     }
     if (!occ.length && !outside.length) {
@@ -1693,6 +1718,21 @@ function wireEvents(box) {
     setFreed(b.dataset.admdate, b.dataset.admfree, true));
   box.querySelectorAll('[data-admrestore]').forEach(b => b.onclick = () =>
     setFreed(b.dataset.admdate, b.dataset.admrestore, false));
+
+  /* ניקוי כפילות: מסירים מ-blocked רק יחידות שאירוע פעיל כבר מכסה.
+     חסימה ידנית אמיתית, שאין מעליה אירוע, נשארת נוגעת לא נוגעת. */
+  box.querySelectorAll('[data-dupclear]').forEach(b => b.onclick = async () => {
+    const dateIso = b.dataset.dupclear;
+    const ov = schedule.overrides[dateIso];
+    if (!ov) return;
+    const [y, mo, dd] = dateIso.split('-').map(Number);
+    const covered = new Set();
+    eventsFor(new Date(y, mo - 1, dd))
+      .forEach(ev => { if (!ev.cancelled) evUnits(ev).forEach(u => covered.add(u)); });
+    const kept = (ov.blocked || []).filter(u => !covered.has(u));
+    const n = (ov.blocked || []).length - kept.length;
+    await saveOverride(dateIso, { blocked: kept }, n + ' חסימות כפולות נוקו');
+  });
 }
 
 /* ── זמן חסום ביומן ────────────────────────────────────────────────
@@ -1748,6 +1788,28 @@ function adminEvHtml(ev, iso, idx) {
     '</div>';
 }
 
+/* ── חסימה כפולה ───────────────────────────────────────────────────
+   אותו זמן יכול להיות חסום פעמיים: גם כאירוע וגם כיחידות ב-blocked.
+   כל עוד האירוע במקומו שתי השכבות מציירות את אותו מלבן והכפילות
+   בלתי נראית — עד שמשחררים את האירוע, ואז הזמן נשאר חסום בלי סיבה
+   גלויה. זה קרה לנו שלוש פעמים לפני שהבנו.
+
+   במקום להמתין לתקלה הבאה, היום מוצגת אזהרה עם כפתור ניקוי. ──── */
+function dupNoteHtml(ov, d, iso) {
+  const bl = (ov && ov.blocked) || [];
+  if (!bl.length) return '';
+  const covered = new Set();
+  eventsFor(d).forEach(ev => { if (!ev.cancelled) evUnits(ev).forEach(u => covered.add(u)); });
+  const dup = bl.filter(u => covered.has(u));
+  if (!dup.length) return '';
+  return '<div class="dupnote">' +
+      '<span class="w">⚠</span>' +
+      '<span class="tx">' + dup.length + ' יחידות חסומות פעמיים — גם כאירוע וגם כחסימה נפרדת. ' +
+        'כרגע זה לא משנה כלום, אבל אם האירוע ישוחרר הזמן ייראה חסום בלי סיבה.</span>' +
+      '<button data-dupclear="' + iso + '">נקה את הכפילות</button>' +
+    '</div>';
+}
+
 /* מה שוחרר לפרטי מתוך admin — בראש היום, עם החזרה לכל סלוט בנפרד.
    בלי זה הסלוט המשוחרר נראה כמו כל זמן פנוי אחר ואי אפשר להחזירו. */
 function freedNoteHtml(ov, iso) {
@@ -1772,24 +1834,27 @@ function cancelledNoteHtml(ev, iso, idx) {
     '</div>';
 }
 
-/* מפצל חלון פנוי לקטעים פנויים וקטעים חסומים, לפי רשת היחידות */
-function gapHtml(fromMin, toMinEnd, blocked, label) {
+/* מפצל חלון פנוי לקטעים פנויים וקטעים חסומים, לפי רשת היחידות.
+   labelFor מחזיר את הסיבה לכל יחידה חסומה — ולכן החלוקה נשברת גם
+   כשהסיבה משתנה, לא רק כשעוברים מחסום לפנוי. כך חיץ של אירוע
+   וחסימה ידנית שצמודים זה לזה מוצגים כשתי רצועות נפרדות. */
+function gapHtml(fromMin, toMinEnd, blocked, labelFor) {
   if (toMinEnd <= fromMin) return '';
   if (!blocked || !blocked.size) return freeHtml(fromMin, toMinEnd);
 
   const step = CFG.baseGridMin;
-  let out = '', segStart = fromMin, segBlocked = null;
-  for (let m = fromMin; m < toMinEnd; m += step) {
-    const b = blocked.has(pad(Math.floor(m/60)) + pad(m%60));
-    if (segBlocked === null) { segBlocked = b; segStart = m; }
-    else if (b !== segBlocked) {
-      out += segBlocked ? blockedHtml(segStart, m, label) : freeHtml(segStart, m);
-      segStart = m; segBlocked = b;
-    }
+  const keyAt = (m) => {
+    const u = pad(Math.floor(m/60)) + pad(m%60);
+    return blocked.has(u) ? (labelFor(u) || 'זמן חסום') : null;
+  };
+  const draw = (a, b, key) => key === null ? freeHtml(a, b) : blockedHtml(a, b, key);
+
+  let out = '', segStart = fromMin, segKey = keyAt(fromMin);
+  for (let m = fromMin + step; m < toMinEnd; m += step) {
+    const k = keyAt(m);
+    if (k !== segKey) { out += draw(segStart, m, segKey); segStart = m; segKey = k; }
   }
-  out += segBlocked ? blockedHtml(segStart, toMinEnd, label)
-                    : freeHtml(segStart, toMinEnd);
-  return out;
+  return out + draw(segStart, toMinEnd, segKey);
 }
 
 function freeHtml(fromMin, toMinEnd) {
