@@ -234,15 +234,28 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .evrow button{background:#fff;border:1px solid #b9c4d8;color:#5b6270;
   border-radius:8px;padding:7px 12px;font:500 13.5px inherit;cursor:pointer}
 .evrow button:hover{background:#eef1f8}
-/* רצועת admin — כל יחידה היא כפתור, כדי לפנות סלוט בודד לפרטי */
-.adminrow .units{flex:1;display:flex;flex-wrap:wrap;gap:6px}
+/* רצועת admin — סגורה למראה, אבל כל יחידה בה היא כפתור.
+   החיווי חייב לומר שני דברים בבת אחת: שהסלוט סגור, ובשביל מי. */
+.adminrow{flex-direction:column;align-items:stretch;gap:9px}
+.adminrow .ahd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.adminrow .ahd .t{font-weight:700;color:#3f5288;font-size:16px}
+.adminrow .atag{flex:1;font:600 12.5px inherit;color:#5b6270;letter-spacing:.2px;
+  background:#e7ebf4;border:1px solid #c9d2e4;border-radius:999px;
+  padding:3px 10px;align-self:center;justify-self:start;max-width:max-content}
+.adminrow .units{display:flex;flex-wrap:wrap;gap:6px}
 .adminrow .unit{display:flex;flex-direction:column;align-items:center;gap:1px;
-  padding:6px 9px;min-width:62px;background:#fff;border:1px solid #b9c4d8;
-  border-radius:8px;cursor:pointer;line-height:1.25}
+  padding:6px 9px;min-width:66px;border:1px solid #b9c4d8;border-radius:8px;
+  cursor:pointer;line-height:1.25;
+  background:repeating-linear-gradient(135deg,#f4f5f7,#f4f5f7 5px,#e7eaef 5px,#e7eaef 10px)}
+.adminrow .unit .ut{font:700 13.5px inherit;color:#3f4655}
+/* #5b6270 ולא אפור בהיר יותר — הכיתוב הזה קטן, והוא כל החיווי */
+.adminrow .unit .ul{font:600 10.5px inherit;color:#5b6270;letter-spacing:.2px}
+.adminrow .unit .uh{display:none;font:700 10.5px inherit;color:var(--sage)}
 .adminrow .unit:hover{background:var(--mint);border-color:var(--sage)}
-.adminrow .unit .ut{font:700 13.5px inherit;color:#3f5288}
 .adminrow .unit:hover .ut{color:var(--sage)}
-.adminrow .unit .ul{font:500 10.5px inherit;color:var(--muted);letter-spacing:.2px}
+.adminrow .unit:hover .ul{display:none}
+.adminrow .unit:hover .uh{display:block}
+.adminrow .ahint{font-size:12.5px;color:var(--muted)}
 .freednote .ttl{flex:0 0 auto;text-decoration:none;font-weight:600;color:var(--navy)}
 .freednote button{font:600 13px inherit}
 /* אירוע שבוטל לשבוע זה — בראש היום, בלי שעה */
@@ -1701,18 +1714,26 @@ function eventHtml(ev, iso, idx) {
    ומשחרר את הכול בבת אחת. */
 function adminEvHtml(ev, iso, idx) {
   const from = toMin(ev.start), to = toMin(ev.end);
+  const label = esc(ev.title || 'admin');
   let cells = '';
   for (let m = from; m < to; m += CFG.baseGridMin) {
+    /* שתי התוויות יושבות זו על זו ומתחלפות ב-hover: במנוחה הסלוט
+       אומר למה הוא סגור, ובמגע הוא אומר מה תעשה הלחיצה. */
     cells += '<button class="unit" data-admfree="' + unitOf(m) +
-             '" data-admdate="' + iso + '" title="לחיצה מפנה את הסלוט לפרטי">' +
+             '" data-admdate="' + iso + '" title="סגור ל-' + label + ' — לחיצה מפנה לפרטי">' +
                '<span class="ut">' + hhmm(m) + '</span>' +
-               '<span class="ul">' + esc(ev.title || 'admin') + '</span>' +
+               '<span class="ul">' + label + '</span>' +
+               '<span class="uh">פנה לפרטי</span>' +
              '</button>';
   }
   return '<div class="evrow adminrow">' +
-      '<span class="t">' + esc(ev.start) + ' – ' + esc(ev.end) + '</span>' +
+      '<div class="ahd">' +
+        '<span class="t">' + esc(ev.start) + ' – ' + esc(ev.end) + '</span>' +
+        '<span class="atag">סגור ל-' + label + '</span>' +
+        '<button data-evcancel="' + idx + '" data-evdate="' + iso + '">בטל לשבוע זה</button>' +
+      '</div>' +
       '<div class="units">' + cells + '</div>' +
-      '<button data-evcancel="' + idx + '" data-evdate="' + iso + '">בטל לשבוע זה</button>' +
+      '<div class="ahint">לחיצה על סלוט מפנה אותו לפרטי</div>' +
     '</div>';
 }
 
