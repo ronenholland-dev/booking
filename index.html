@@ -1492,7 +1492,10 @@ function submit() {
   const units = Cal.unitsFor(state.selTime, s.durationMin);
 
   const appt  = buildAppointment();
-  const phone = normPhone(state.form.phone);
+  /* phoneKey ולא phone: בראש הפונקציה כבר קיים const phone עם הערך
+     הגולמי מהטופס. שני const באותו סקופ הם שגיאת תחביר שמפילה את
+     כל המודול — כלומר את כל האפליקציה, בלי מסך שגיאה. */
+  const phoneKey = normPhone(state.form.phone);
   /* התפיסה פגה בחצות של יום התור, כדי שמי שהתור שלו עבר יוכל לקבוע
      שוב מיד ובלי שאיש ישחרר אותו ידנית. */
   const until = new Date(state.selDate.getFullYear(), state.selDate.getMonth(),
@@ -1506,7 +1509,7 @@ function submit() {
 
   (async () => {
     // 1. תפיסת המטופל — נכשלת אם כבר יש לו תור עתידי פעיל
-    const claim = await Store.claimPatient(phone, appt.id, until);
+    const claim = await Store.claimPatient(phoneKey, appt.id, until);
     if (!claim.ok) {
       Track.step('booking_rejected', { reason: claim.hasAppointment ? 'has_appointment' : 'claim_error' });
       return fail(claim.hasAppointment ? TEXTS.s5.errHasAppt : TEXTS.s5.errSave);
@@ -1522,7 +1525,7 @@ function submit() {
       return;
     }
 
-    await Store.releaseClaim(phone);
+    await Store.releaseClaim(phoneKey);
 
     if (res.taken) {
       const b = await Store.day(dIso);
