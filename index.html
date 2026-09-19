@@ -315,7 +315,18 @@ const TEXTS = {
     errLast:     'נא למלא שם משפחה',
     errPhone:    'נא למלא מספר נייד תקין (10 ספרות, מתחיל ב-05)',
     errId:       'מספר זהות צריך להיות בן 9 ספרות',
-    errSave:     'לא הצלחנו לשמור את התור כרגע. אנא נסו שוב, או פנו אלינו בווטסאפ 052-227-0070.'
+    errSave:     'לא הצלחנו לשמור את התור כרגע. אנא נסו שוב, או פנו אלינו בווטסאפ 052-227-0070.',
+
+    /* ── שתי הודעות נפרדות, במכוון ──────────────────────────────────
+       errBlocked — מטופל שמופיע ברשימת הטיפול המיוחד. הניסוח ניטרלי
+       ואינו מרמז על סיבה או על קטגוריה: מי שנדרש תהליך ידני ומי
+       שאיננו קובעים לו תור כלל מקבלים בדיוק את אותו משפט.
+
+       errHasAppt — מטופל שכבר יש לו תור עתידי. זה מצב לגיטימי לחלוטין
+       ולכן מקבל ניסוח שמסביר מה קרה ומה לעשות. לתת לו את הודעת
+       החסימה היה מרמז שיש בו פגם, וזה פשוט לא נכון. */
+    errBlocked:  'לא ניתן לקבוע את התור המבוקש.\nנא לפנות ישירות למרפאה בהודעת ווטסאפ 052-227-0070',
+    errHasAppt:  'כבר קיים לך תור עתידי במרפאה.\nלשינוי המועד או לקביעת תור נוסף, פנו אלינו בווטסאפ 052-227-0070'
   },
 
   /* ── מסך 6: אישור ── */
@@ -960,6 +971,45 @@ const Store = (() => {
     } catch (e) { Debug.log('release failed (לא קריטי)', String(e)); }
   }
 
+  /* ── תפיסת המטופל — "תור עתידי אחד בלבד" ──────────────────────────
+     חוקי Firestore אינם יכולים להריץ שאילתה, ולכן אי אפשר לשאול מהם
+     "האם לטלפון הזה כבר יש תור". במקום זאת כל מטופל תופס מסמך אחד
+     ששמו מספר הנייד המנורמל, ב-patient_index.
+
+     היופי הוא ב-create של Firestore: הוא נכשל מעצמו אם המסמך קיים.
+     לכן הניסיון השני של אותו אדם נכשל ברמת השרת, בלי שהלקוח יצטרך
+     לקרוא כלום — וזה חשוב, כי קריאה מהאוסף הזה הייתה מאפשרת לכל
+     אדם לבדוק אם מספר טלפון מסוים הוא מטופל של המרפאה.
+
+     התפיסה מחזיקה active_until. אחרי שהתור עבר, החוק מתיר לדרוס
+     אותה, כך שהמטופל חופשי לקבוע שוב בלי שאיש ישחרר ידנית. */
+  async function claimPatient(phoneNorm, appointmentId, activeUntil) {
+    if (CONFIG.demoMode || !phoneNorm) return { ok: true };
+    await init();
+    try {
+      await fs.setDoc(fs.doc(db, 'patient_index', phoneNorm), {
+        phone: phoneNorm,
+        appointment_id: appointmentId,
+        active_until: fs.Timestamp.fromDate(activeUntil),
+        created_at: fs.Timestamp.now()
+      });
+      return { ok: true };
+    } catch (e) {
+      const denied = (e && e.code) === 'permission-denied';
+      Debug.log(denied ? '✗ למטופל כבר יש תור עתידי' : '✗ תפיסת מטופל נכשלה', String(e));
+      return { ok: false, hasAppointment: denied };
+    }
+  }
+
+  /* ניקוי תפיסה יתומה: אם יצירת התור נכשלה אחרי שהתפיסה כבר נרשמה,
+     המטופל היה נחסם לנצח. החוק מתיר מחיקה כשהתור שאליו היא מצביעה
+     אינו קיים — ולכן זו פעולה בטוחה שאי אפשר לנצל לרעה. */
+  async function releaseClaim(phoneNorm) {
+    if (CONFIG.demoMode || !phoneNorm) return;
+    try { await init(); await fs.deleteDoc(fs.doc(db, 'patient_index', phoneNorm)); }
+    catch (e) { Debug.log('שחרור תפיסה נכשל (לא קריטי)', String(e)); }
+  }
+
   /* ── ההזמנה עצמה ──
      בדיקת פנויות + נעילת כל היחידות + כתיבת התור — הכל בטרנזקציה אחת.
      זה מה שמונע שני מטופלים על אותו סלוט. */
@@ -987,9 +1037,13 @@ const Store = (() => {
       });
       return { ok: true };
     } catch (e) {
-      const taken = String(e).includes('SLOT_TAKEN');
-      Debug.log(taken ? '✗ הסלוט נתפס' : '✗ שגיאת כתיבה', String(e));
-      return { ok: false, taken };
+      const taken  = String(e).includes('SLOT_TAKEN');
+      /* permission-denied מגיע אך ורק מחוקי האבטחה. התנאי היחיד שנוסף
+         להם ביצירת תור הוא רשימת הטיפול המיוחד, ולכן זהו הקוד שמזהה
+         אותה. תקלות רשת מחזירות unavailable / deadline-exceeded. */
+      const denied = (e && e.code) === 'permission-denied';
+      Debug.log(taken ? '✗ הסלוט נתפס' : denied ? '✗ מטופל ברשימת טיפול מיוחד' : '✗ שגיאת כתיבה', String(e));
+      return { ok: false, taken, blocked: denied };
     }
   }
 
@@ -1013,7 +1067,7 @@ const Store = (() => {
     }
   }
 
-  return { init, range, day, schedule, hold, release, book };
+  return { init, range, day, schedule, hold, release, book, claimPatient, releaseClaim };
 })();
 
 
@@ -1039,6 +1093,24 @@ const state = {
   holdId:      null,       // מזהה השמירה הזמנית הפעילה
   heldDate:    null,
   heldUnits:   null
+};
+
+/* ── נרמול מזהי מטופל ───────────────────────────────────────────────
+   שמות המסמכים ב-patient_index וב-special_handling הם הערכים האלה,
+   ולכן הם חייבים להיות דטרמיניסטיים. בלי נרמול, 052-227-0070 ו-
+   0522270070 ו-+972522270070 היו שלושה אנשים שונים — וכך גם
+   039893996 מול 39893996, שתי צורות של אותה תעודת זהות שראינו
+   בפועל בנתוני אודורו ושידורית.
+   שתיהן מוחזרות ריקות כשאין קלט תקין, והקוראים מטפלים בזה. */
+const normPhone = (v) => {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.startsWith('972')) d = '0' + d.slice(3);      // +972-52-… → 052-…
+  if (d.length === 9 && d[0] !== '0') d = '0' + d;     // 52227007 חסר אפס מוביל
+  return /^0\d{9}$/.test(d) ? d : '';
+};
+const normId = (v) => {
+  const d = String(v == null ? '' : v).replace(/\D/g, '');
+  return d.length && d.length <= 9 ? d.padStart(9, '0') : '';
 };
 
 const svc = () => CONFIG.services[state.serviceKey] || null;
@@ -1419,7 +1491,29 @@ function submit() {
   const dIso  = Cal.iso(state.selDate);
   const units = Cal.unitsFor(state.selTime, s.durationMin);
 
-  Store.book(dIso, units, buildAppointment(), state.holdId).then(res => {
+  const appt  = buildAppointment();
+  const phone = normPhone(state.form.phone);
+  /* התפיסה פגה בחצות של יום התור, כדי שמי שהתור שלו עבר יוכל לקבוע
+     שוב מיד ובלי שאיש ישחרר אותו ידנית. */
+  const until = new Date(state.selDate.getFullYear(), state.selDate.getMonth(),
+                         state.selDate.getDate() + 1, 0, 0, 0);
+
+  const fail = (msg) => {
+    btn.disabled = false;
+    btn.textContent = label;
+    alert(msg);
+  };
+
+  (async () => {
+    // 1. תפיסת המטופל — נכשלת אם כבר יש לו תור עתידי פעיל
+    const claim = await Store.claimPatient(phone, appt.id, until);
+    if (!claim.ok) {
+      Track.step('booking_rejected', { reason: claim.hasAppointment ? 'has_appointment' : 'claim_error' });
+      return fail(claim.hasAppointment ? TEXTS.s5.errHasAppt : TEXTS.s5.errSave);
+    }
+
+    // 2. הסלוט והתור. נכשל → משחררים את התפיסה, אחרת המטופל נחסם לנצח.
+    const res = await Store.book(dIso, units, appt, state.holdId);
     if (res.ok) {
       // ההמרה נורית רק אחרי שהתור באמת נכתב — לא על כוונה בלבד.
       Track.conversion(state.txId, s);
@@ -1427,19 +1521,24 @@ function submit() {
       go('s6');
       return;
     }
-    btn.disabled = false;
-    btn.textContent = label;
+
+    await Store.releaseClaim(phone);
+
     if (res.taken) {
-      Store.day(dIso).then(b => {
-        state.busy.set(dIso, b || new Set());
-        state.selTime = null; state.holdId = null; state.heldUnits = null;
-        alert(TEXTS.s4.slotGone);
-        go('s4');
-      });
-    } else {
-      alert(TEXTS.s5.errSave);
+      const b = await Store.day(dIso);
+      state.busy.set(dIso, b || new Set());
+      state.selTime = null; state.holdId = null; state.heldUnits = null;
+      btn.disabled = false; btn.textContent = label;
+      alert(TEXTS.s4.slotGone);
+      go('s4');
+      return;
     }
-  });
+    if (res.blocked) {
+      Track.step('booking_rejected', { reason: 'special_handling' });
+      return fail(TEXTS.s5.errBlocked);
+    }
+    fail(TEXTS.s5.errSave);
+  })();
 }
 
 /* רשומת התור כפי שתיכתב ל-Firestore בשלב 2 (נספח א' במסמך מעקב הלידים) */
@@ -1469,6 +1568,12 @@ function buildAppointment() {
     patient_phone: state.form.phone,
     patient_id_number: state.form.idnum || null,
     patient_note: state.form.note || null,
+    /* ── שדות מנורמלים, לשימוש חוקי האבטחה ──────────────────────────
+       החוק ביצירת תור בודק קיום מסמך ב-special_handling לפי הערכים
+       האלה. הם חייבים להיכתב תמיד — גם כשאין ת"ז — כי נתיב עם ערך
+       ריק אינו חוקי בחוקי Firestore. לכן 'none' כברירת מחדל. */
+    phone_norm: normPhone(state.form.phone) || 'none',
+    id_norm:    normId(state.form.idnum)    || 'none',
     status: 'pending',
     status_changed_at: null,
     cancel_reason: null,
