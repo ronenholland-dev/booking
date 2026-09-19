@@ -234,6 +234,17 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .evrow button{background:#fff;border:1px solid #b9c4d8;color:#5b6270;
   border-radius:8px;padding:7px 12px;font:500 13.5px inherit;cursor:pointer}
 .evrow button:hover{background:#eef1f8}
+/* רצועת admin — כל יחידה היא כפתור, כדי לפנות סלוט בודד לפרטי */
+.adminrow .units{flex:1;display:flex;flex-wrap:wrap;gap:6px}
+.adminrow .unit{display:flex;flex-direction:column;align-items:center;gap:1px;
+  padding:6px 9px;min-width:62px;background:#fff;border:1px solid #b9c4d8;
+  border-radius:8px;cursor:pointer;line-height:1.25}
+.adminrow .unit:hover{background:var(--mint);border-color:var(--sage)}
+.adminrow .unit .ut{font:700 13.5px inherit;color:#3f5288}
+.adminrow .unit:hover .ut{color:var(--sage)}
+.adminrow .unit .ul{font:500 10.5px inherit;color:var(--muted);letter-spacing:.2px}
+.freednote .ttl{flex:0 0 auto;text-decoration:none;font-weight:600;color:var(--navy)}
+.freednote button{font:600 13px inherit}
 /* אירוע שבוטל לשבוע זה — בראש היום, בלי שעה */
 .evcancelled{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   margin-bottom:13px;padding:10px 14px;border-radius:var(--radius);
@@ -1234,6 +1245,56 @@ function evUnits(ev) {
   return out;
 }
 
+/* ── שחרור חלקי של שעות admin ──────────────────────────────────────
+   admin ומכבי מגיעים מאודורו כרצועה אחת רציפה. לפעמים מתברר שרק
+   חלק ממנה באמת נחוץ למכבי, והשאר צריך להיפתח לפרטי.
+
+   ⚠️ למה זה ממומש כפיצול הרצועה ולא כשדה חדש על האירוע:
+      אפליקציית המטופל קוראת את אותה רשימת האירועים. שדה חדש היה
+      מחייב לעדכן גם אותה — והיא חסומה להעלאה עד שיפורסמו חוקי
+      Firestore. פיצול לטווחים נשאר בשפה שהיא כבר מבינה, ולכן
+      המטופלים רואים את השחרור מיד, בלי לגעת בקובץ שלהם בכלל.
+
+   מקור האמת נשמר בנפרד: admin_src מחזיק את הטווחים המקוריים,
+   admin_freed את היחידות ששוחררו, ו-events נגזר משניהם מחדש בכל
+   שינוי. לכן ההחזרה מדויקת תמיד, גם אחרי כמה שחרורים. שני השדות
+   האלה נקראים רק כאן — אפליקציית המטופל מתעלמת מהם. ──────────── */
+const isAdminEv = (ev) => {
+  const t = ((ev && ev.title) || '').trim();
+  return t === 'admin' || /מכבי/.test(t);
+};
+
+const hhmm = (m) => pad(Math.floor(m/60)) + ':' + pad(m%60);
+const unitOf = (m) => pad(Math.floor(m/60)) + pad(m%60);
+
+/* בונה מחדש את רשימת האירועים מתוך המקור ומהיחידות ששוחררו.
+   אירועים שאינם admin (למשל הזום עם ענת) עוברים כמו שהם. */
+function rebuildEvents(ov) {
+  const src   = ov.admin_src || [];
+  const freed = new Set(ov.admin_freed || []);
+  const keep  = (ov.events || []).filter(e => !isAdminEv(e));
+  const out   = [];
+  src.forEach(ev => {
+    const from = toMin(ev.start), to = toMin(ev.end);
+    let segStart = null;
+    for (let m = from; m <= to; m += CFG.baseGridMin) {
+      const cut = (m === to) || freed.has(unitOf(m));
+      if (!cut && segStart === null) segStart = m;
+      if (cut && segStart !== null) {
+        out.push(Object.assign({}, ev, {
+          start: hhmm(segStart),
+          end:   hhmm(m),
+          /* החיץ נשאר רק בקצוות האמיתיים של הרצועה המקורית */
+          buffer_before_min: segStart === from ? (ev.buffer_before_min || 0) : 0,
+          buffer_after_min:  m       === to   ? (ev.buffer_after_min  || 0) : 0
+        }));
+        segStart = null;
+      }
+    }
+  });
+  return keep.concat(out);
+}
+
 const blockedFor = (date) => {
   const ov = schedule.overrides[isoOf(date)];
   const set = new Set((ov && ov.blocked) || []);
@@ -1241,7 +1302,7 @@ const blockedFor = (date) => {
   return set;
 };
 
-async function saveOverride(iso, patch) {
+async function saveOverride(iso, patch, msg) {
   const cur = schedule.overrides[iso] || { date: iso };
   const next = Object.assign({}, cur, patch, { date: iso });
   /* מסמך שאין בו שום חריגה — נמחק, כדי שהיום יחזור לברירת המחדל.
@@ -1255,7 +1316,7 @@ async function saveOverride(iso, patch) {
     if (empty) { await deleteDoc(doc(db,'overrides',iso)); delete schedule.overrides[iso]; }
     else       { await setDoc(doc(db,'overrides',iso), next); schedule.overrides[iso] = next; }
     render();
-    toast('נשמר');
+    toast(msg || 'נשמר');
   } catch (e) { console.error(e); toast('השמירה נכשלה'); }
 }
 
@@ -1487,6 +1548,7 @@ function paintTimeline() {
   eventsFor(d).forEach((ev, i) => {
     if (ev.cancelled) html += cancelledNoteHtml(ev, iso, i);
   });
+  html += freedNoteHtml(schedule.overrides[iso], iso);
 
   /* משימות חידוש מרשם — בראש היום, בלי שעה ולפני ציר הזמן.
      הן אינן משתתפות בציר עצמו כי אין להן מיקום בו. */
@@ -1577,6 +1639,36 @@ function wireEvents(box) {
     setCancelled(b.dataset.evdate, b.dataset.evcancel, true));
   box.querySelectorAll('[data-evrestore]').forEach(b => b.onclick = () =>
     setCancelled(b.dataset.evdate, b.dataset.evrestore, false));
+
+  /* שחרור והחזרה של סלוט admin בודד.
+     admin_src נלכד בפעם הראשונה מתוך האירועים הקיימים, ומשמש מכאן
+     ואילך כמקור — כך ששחרור שני לא ייגזר מרשימה שכבר פוצלה. */
+  const setFreed = async (dateIso, unit, free) => {
+    const ov = schedule.overrides[dateIso];
+    if (!ov) return;
+    const src = (ov.admin_src && ov.admin_src.length)
+      ? ov.admin_src
+      : (ov.events || []).filter(isAdminEv).map(e => Object.assign({}, e));
+    if (!src.length) { toast('אין ביום הזה רצועת admin'); return; }
+
+    const freed = new Set(ov.admin_freed || []);
+    if (free) freed.add(unit); else freed.delete(unit);
+    const list = [...freed].sort();
+
+    const patch = { events: rebuildEvents({ events: ov.events, admin_src: src, admin_freed: list }) };
+    /* כשלא נשאר שום סלוט משוחרר, הרצועה חזרה לצורתה המקורית
+       ואין עוד צורך במקור — מוחקים כדי שלא יישאר זיכרון מיותר. */
+    if (list.length) { patch.admin_src = src; patch.admin_freed = list; }
+    else             { patch.admin_src = null; patch.admin_freed = null; }
+
+    await saveOverride(dateIso, patch, free
+      ? 'הסלוט פנוי לפרטי — לרשום עליו באודורו "פנוי לפרטי"'
+      : 'הסלוט הוחזר ל-admin');
+  };
+  box.querySelectorAll('[data-admfree]').forEach(b => b.onclick = () =>
+    setFreed(b.dataset.admdate, b.dataset.admfree, true));
+  box.querySelectorAll('[data-admrestore]').forEach(b => b.onclick = () =>
+    setFreed(b.dataset.admdate, b.dataset.admrestore, false));
 }
 
 /* ── זמן חסום ביומן ────────────────────────────────────────────────
@@ -1596,10 +1688,44 @@ function blockedHtml(fromMin, toMinEnd, label) {
 
 /* אירוע פעיל — בשעות האמיתיות שלו, כדי שאפשר יהיה לדעת מתי להתחבר */
 function eventHtml(ev, iso, idx) {
+  if (isAdminEv(ev)) return adminEvHtml(ev, iso, idx);
   return '<div class="evrow">' +
       '<span class="t">' + esc(ev.start) + ' – ' + esc(ev.end) + '</span>' +
       '<span class="ttl">' + esc(ev.title || 'אירוע') + '</span>' +
       '<button data-evcancel="' + idx + '" data-evdate="' + iso + '">בטל לשבוע זה</button>' +
+    '</div>';
+}
+
+/* רצועת admin/מכבי — מחולקת ליחידות לחיצות, כדי שאפשר יהיה לפנות
+   סלוט בודד לפרטי בלי לוותר על כל הרצועה. הכפתור הישן נשאר לצידה
+   ומשחרר את הכול בבת אחת. */
+function adminEvHtml(ev, iso, idx) {
+  const from = toMin(ev.start), to = toMin(ev.end);
+  let cells = '';
+  for (let m = from; m < to; m += CFG.baseGridMin) {
+    cells += '<button class="unit" data-admfree="' + unitOf(m) +
+             '" data-admdate="' + iso + '" title="לחיצה מפנה את הסלוט לפרטי">' +
+               '<span class="ut">' + hhmm(m) + '</span>' +
+               '<span class="ul">' + esc(ev.title || 'admin') + '</span>' +
+             '</button>';
+  }
+  return '<div class="evrow adminrow">' +
+      '<span class="t">' + esc(ev.start) + ' – ' + esc(ev.end) + '</span>' +
+      '<div class="units">' + cells + '</div>' +
+      '<button data-evcancel="' + idx + '" data-evdate="' + iso + '">בטל לשבוע זה</button>' +
+    '</div>';
+}
+
+/* מה שוחרר לפרטי מתוך admin — בראש היום, עם החזרה לכל סלוט בנפרד.
+   בלי זה הסלוט המשוחרר נראה כמו כל זמן פנוי אחר ואי אפשר להחזירו. */
+function freedNoteHtml(ov, iso) {
+  const f = ((ov && ov.admin_freed) || []).slice().sort();
+  if (!f.length) return '';
+  return '<div class="evcancelled freednote">' +
+      '<span class="x">↧</span>' +
+      '<span class="ttl">פונה לפרטי מתוך admin:</span>' +
+      f.map(u => '<button data-admrestore="' + u + '" data-admdate="' + iso +
+                 '" title="החזרה ל-admin">' + u.slice(0,2) + ':' + u.slice(2) + ' ⟲</button>').join('') +
     '</div>';
 }
 
