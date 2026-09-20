@@ -286,6 +286,30 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
   border-radius:var(--radius);padding:16px;font-size:15px;margin-bottom:16px}
 
 /* ── מסך ההגדרות ── */
+/* טיפול מיוחד — טבלה + טופס הוספה */
+.special .shtab{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:14px}
+.special .shtab th{background:#eef1f5;color:var(--navy);text-align:right;
+  padding:8px 10px;font-weight:700;font-size:13px;border-bottom:1px solid var(--line)}
+.special .shtab td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.special .shtab td.ph{font-weight:700;color:var(--navy);direction:ltr;text-align:right;white-space:nowrap}
+.special .shkind{font-weight:600;color:#5b6270;font-size:13px}
+.special .shnote{color:var(--muted);font-size:13.5px;line-height:1.55}
+.special .shby{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.special .empty2{color:var(--muted);text-align:center;padding:16px}
+.special button.shdel{background:#fff;border:1px solid #d9b0aa;color:#a2483c;
+  border-radius:7px;padding:5px 11px;font:600 13px inherit;cursor:pointer}
+.special button.shdel:hover{background:#fbeae8}
+.shform{background:#f7f8fa;border:1px solid var(--line);border-radius:10px;padding:14px}
+.shform .shrow{display:flex;gap:12px;flex-wrap:wrap}
+.shform .shrow label{flex:1;min-width:150px}
+.shform label{display:block;font-weight:600;color:var(--navy);font-size:13.5px;margin-bottom:9px}
+.shform .opt{font-weight:400;color:var(--muted);font-size:12.5px}
+.shform input,.shform select,.shform textarea{width:100%;margin-top:4px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:8px;font:400 15px inherit;background:#fff}
+.shform textarea{resize:vertical;line-height:1.5}
+.shform button{margin-top:4px;background:var(--navy);color:#fff;border:0;
+  border-radius:8px;padding:9px 18px;font:700 14.5px inherit;cursor:pointer}
+
 .setnote{background:var(--mint);border-radius:8px;padding:11px 14px;
   font-size:14px;color:var(--navy);margin-bottom:16px}
 .dayedit{border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:24px}
@@ -906,6 +930,7 @@ async function doCancel(a, code, label) {
         cancel_reason: label
       });
     });
+    await releaseClaim(a);          // אחרת המטופל נעול אף שאין לו תור
     toast(TXT.cancelled);
     return true;
   } catch (e) { console.error(e); toast('הביטול נכשל'); return false; }
@@ -931,6 +956,7 @@ async function reviveAppt(a) {
         cancel_reason: null, cancel_code: null
       });
     });
+    await setClaim(a, dateOf(a), true);   // התור חזר — והתפיסה איתו
     toast(TXT.revived);
   } catch (e) {
     toast(String(e).includes('TAKEN') ? TXT.noSlot : 'ההחזרה נכשלה');
@@ -1060,11 +1086,79 @@ async function rescheduleAppt(appt, data) {
         updated_at:        Timestamp.now()
       });
     });
+
+    /* ── התפיסה ב-patient_index חייבת לזוז יחד עם התור ─────────────
+       התפיסה מחזיקה active_until — חצות של יום התור — וכשהיא פגה
+       המטופל חופשי לקבוע שוב. הזזת תור קדימה בלי לעדכן אותה משאירה
+       את הפקיעה בתאריך הישן: המטופל יוכל לקבוע תור שני עוד לפני
+       שהתור הקיים שלו הגיע.
+
+       מעדכנים רק תפיסה קיימת ולא יוצרים חדשה. תור שנקבע ידנית או
+       לפני 19.9.2026 מעולם לא תפס מסמך, ויצירה כאן הייתה מגבילה
+       מטופל שמעולם לא היה מוגבל — הפתעה שאיש לא ביקש. */
+    await setClaim(appt, data.when, false);
+
     return { ok: true };
   } catch (e) {
     const taken = String(e).includes('SLOT_TAKEN');
     return { ok: false, taken, msg: String(e && e.message || e) };
   }
+}
+
+/* ── מעגל התפיסה ב-patient_index ───────────────────────────────────
+   התפיסה היא מסמך ששמו הנייד המנורמל, והיא מה שמונע ממטופל לקבוע
+   תור עתידי שני דרך האפליקציה. היא נוצרת שם, בקביעה העצמאית — ולכן
+   קל לשכוח שהיא קיימת ולהשאיר אותה מאחור כשהתור זז, מתבטל או חוזר.
+
+   שלושת המצבים, וכולם חייבים להיות מטופלים:
+     הזזה  → להאריך את הפקיעה למועד החדש
+     ביטול → לשחרר, אחרת המטופל נעול אף שאין לו תור
+     החזרה → לתפוס מחדש
+
+   ⚠️ הביטול הוא הקריטי. הנוהג הוא ביטול אחרי 48 שעות בלי תשלום,
+      ואז נשלחת למטופל הודעת ביטול. מטופל שמתעורר בעקבותיה ומנסה
+      לקבוע שוב היה מקבל "כבר קיים לך תור עתידי" — כלומר סתירה
+      ישירה להודעה שקיבל, ונעילה עד התאריך המקורי.
+
+   כל הפעולות כאן מתבצעות אחרי שהטרנזקציה הראשית כבר הצליחה, ואינן
+   מפילות אותה בכישלון: עדיף תפיסה לא מעודכנת מאשר הזזה שנכשלה. */
+
+function claimUntil(when) {
+  return new Date(when.getFullYear(), when.getMonth(), when.getDate() + 1, 0, 0, 0);
+}
+
+/* קובע או מאריך תפיסה. createIfMissing=false מעדכן רק תפיסה קיימת —
+   תור ידני או תור מלפני 19.9.2026 מעולם לא תפס מסמך, ויצירה בהזזה
+   הייתה מגבילה מטופל שמעולם לא היה מוגבל. */
+async function setClaim(appt, when, createIfMissing) {
+  const phone = normPhone(appt.patient_phone);
+  if (!phone) return;
+  try {
+    const ref  = doc(db, 'patient_index', phone);
+    const snap = await getDoc(ref);
+    const cur  = snap.exists() ? (snap.data() || {}) : null;
+    if (!cur && !createIfMissing) return;
+    if (cur && cur.appointment_id && cur.appointment_id !== appt._id) return;  // שייכת לתור אחר
+    await setDoc(ref, {
+      phone,
+      appointment_id: appt._id,
+      active_until:   Timestamp.fromDate(claimUntil(when)),
+      updated_at:     Timestamp.now()
+    });
+  } catch (e) { console.error('setClaim failed', e); }
+}
+
+/* משחרר תפיסה — רק אם היא באמת שייכת לתור הזה. */
+async function releaseClaim(appt) {
+  const phone = normPhone(appt.patient_phone);
+  if (!phone) return;
+  try {
+    const ref  = doc(db, 'patient_index', phone);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    if ((snap.data() || {}).appointment_id !== appt._id) return;
+    await deleteDoc(ref);
+  } catch (e) { console.error('releaseClaim failed', e); }
 }
 
 async function createManual(data) {
@@ -1359,6 +1453,7 @@ async function renderSettings() {
   if (!schedLoaded) {
     host.innerHTML = '<div class="empty">טוען את הלוז…</div>';
     await loadSchedule();
+    await loadSpecial();
   }
   if (!state.calMonth) state.calMonth = new Date(state.day.getFullYear(), state.day.getMonth(), 1);
 
@@ -1366,10 +1461,12 @@ async function renderSettings() {
     '<div class="setnote">שינוי כאן משפיע מיד על מה שהמטופל רואה באפליקציה.</div>' +
     monthCalHtml(true) +
     '<div id="dayEdit"></div>' +
-    weeklyHtml();
+    weeklyHtml() +
+    specialHtml();
   wireMonthCal();
   paintDayEdit();
   wireWeekly();
+  wireSpecial();
 }
 
 function weeklyHtml() {
@@ -1406,6 +1503,135 @@ function wireWeekly() {
     }
     saveWeekly(out);
   };
+}
+
+/* ── טיפול מיוחד ───────────────────────────────────────────────────
+   מטופלים שקביעת התור שלהם אינה יכולה להיות אוטומטית. שתי קטגוריות,
+   והמטופל רואה בשתיהן בדיוק את אותה הודעה ניטרלית — הוא אינו יודע
+   באיזו הוא נמצא, ואין לספר לו.
+
+   ⚠️ המפתח הוא הנייד המנורמל. ת"ז היא שדה משלים בלבד: חלק ממטופלי
+      המרפאה נמנעים ממנה במכוון, וסינון לפיה מסתיר בדיוק את האוכלוסייה
+      הרגישה ביותר. ראו PATIENT-IDENTITY-RULE.md.
+
+   ⚠️⚠️ אין ליצור לעולם מסמך בשם 'none'. חוק יצירת התור בודק
+      special_handling/$(phone_norm) עם ברירת מחדל 'none' לתורים
+      שאין בהם את השדה — מסמך כזה היה חוסם קביעת תור לכל המטופלים.
+   ──────────────────────────────────────────────────────────────── */
+const normPhone = (v) => {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.startsWith('972')) d = '0' + d.slice(3);
+  if (d.length === 9 && d[0] !== '0') d = '0' + d;
+  return /^05\d{8}$/.test(d) ? d : '';
+};
+const normId = (v) => {
+  const d = String(v == null ? '' : v).replace(/\D/g, '');
+  return d.length && d.length <= 9 ? d.padStart(9, '0') : '';
+};
+
+const SH_KINDS = {
+  manual:  'תהליך ידני — מקדמה לפני קביעת מועד',
+  hold:    'לא לקבוע — להעביר לרוני'
+};
+
+let shList = [];
+
+async function loadSpecial() {
+  try {
+    const snap = await getDocs(collection(db, 'special_handling'));
+    shList = [];
+    snap.forEach(d => { const v = d.data() || {};
+      if (!v.alias_of) shList.push({ key: d.id, ...v }); });
+    shList.sort((a,b) => (b.at && b.at.seconds || 0) - (a.at && a.at.seconds || 0));
+  } catch (e) { console.error(e); shList = []; }
+}
+
+function specialHtml() {
+  const rows = shList.length ? shList.map(r => {
+    const when = r.at && r.at.toDate
+      ? r.at.toDate().toLocaleDateString('he-IL') : '';
+    return '<tr>' +
+      '<td class="ph">' + esc(r.phone || r.key) + '</td>' +
+      '<td>' + (r.id_number ? esc(r.id_number) : '—') + '</td>' +
+      '<td><span class="shkind">' + esc(SH_KINDS[r.kind] || r.kind || '') + '</span><br>' +
+          '<span class="shnote">' + esc(r.note || '') + '</span></td>' +
+      '<td class="shby">' + esc((r.by || '').split('@')[0]) + '<br>' + when + '</td>' +
+      '<td><button class="shdel" data-shdel="' + esc(r.key) + '">הסרה</button></td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="5" class="empty2">הרשימה ריקה</td></tr>';
+
+  const opts = Object.entries(SH_KINDS)
+    .map(([k,v]) => '<option value="'+k+'">'+esc(v)+'</option>').join('');
+
+  return '<div class="weekly special">' +
+    '<h3>טיפול מיוחד</h3>' +
+    '<p class="hint">מטופלים שקביעת התור שלהם אינה יכולה להיות אוטומטית. ' +
+      'הם יראו באפליקציה הודעה ניטרלית שמפנה אותם לווטסאפ של המרפאה, ' +
+      'זהה בשתי הקטגוריות. <b>הזיהוי לפי מספר הנייד</b>; ת"ז היא תוספת.</p>' +
+    '<table class="shtab">' +
+      '<tr><th>נייד</th><th>ת"ז</th><th>קטגוריה והנחיה</th><th>מי ומתי</th><th></th></tr>' +
+      rows +
+    '</table>' +
+    '<div class="shform">' +
+      '<div class="shrow">' +
+        '<label>מספר נייד<input id="shPhone" inputmode="numeric" placeholder="05XXXXXXXX"></label>' +
+        '<label>מספר זהות <span class="opt">(לא חובה)</span><input id="shId" inputmode="numeric"></label>' +
+        '<label>קטגוריה<select id="shKind">' + opts + '</select></label>' +
+      '</div>' +
+      '<label>מה הסיבה וכיצד יש לנהוג איתו' +
+        '<textarea id="shNote" rows="2" placeholder="למשל: קבע שלוש פעמים וביטל ברגע האחרון. לגבות מקדמה מלאה לפני קביעת מועד."></textarea></label>' +
+      '<button id="shAdd">הוספה לרשימה</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function wireSpecial() {
+  const add = $('shAdd');
+  if (!add) return;
+
+  add.onclick = async () => {
+    const phone = normPhone($('shPhone').value);
+    const idn   = normId($('shId').value);
+    const note  = $('shNote').value.trim();
+    const kind  = $('shKind').value;
+
+    if (!phone) { toast('מספר נייד לא תקין — נדרשות 10 ספרות שמתחילות ב-05'); return; }
+    if (!note)  { toast('נא לכתוב מה הסיבה וכיצד לנהוג'); return; }
+    /* רשת ביטחון אחרונה מול המסמך שהיה חוסם את כולם */
+    if (phone === 'none' || idn === 'none') { toast('ערך לא חוקי'); return; }
+    if (shList.some(r => (r.phone || r.key) === phone)) {
+      toast('המספר כבר ברשימה'); return;
+    }
+
+    const rec = { phone, id_number: idn || null, kind, note,
+                  by: auth.currentUser ? auth.currentUser.email : null,
+                  at: Timestamp.now() };
+    try {
+      await setDoc(doc(db, 'special_handling', phone), rec);
+      /* מסמך שני לפי ת"ז — כדי שהחסימה תתפוס גם כשהמטופל
+         ימלא ת"ז ונייד אחר. alias_of מסמן שזו אותה רשומה. */
+      if (idn) await setDoc(doc(db, 'special_handling', idn),
+                            Object.assign({}, rec, { alias_of: phone }));
+      await loadSpecial();
+      renderSettings();
+      toast('נוסף לרשימה');
+    } catch (e) { console.error(e); toast('השמירה נכשלה'); }
+  };
+
+  $('list').querySelectorAll('[data-shdel]').forEach(b => b.onclick = async () => {
+    const key = b.dataset.shdel;
+    const rec = shList.find(r => r.key === key);
+    if (!confirm('להסיר את ' + key + ' מרשימת הטיפול המיוחד?')) return;
+    try {
+      await deleteDoc(doc(db, 'special_handling', key));
+      if (rec && rec.id_number) {
+        try { await deleteDoc(doc(db, 'special_handling', rec.id_number)); } catch (e) {}
+      }
+      await loadSpecial();
+      renderSettings();
+      toast('הוסר מהרשימה');
+    } catch (e) { console.error(e); toast('ההסרה נכשלה'); }
+  });
 }
 
 function paintDayEdit() {
