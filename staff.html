@@ -834,8 +834,12 @@ function subscribe() {
 }
 
 /* הסלוט האדום נקבע לפי שעתיים מהסימון. מסך שנשאר פתוח צריך
-   להאדים מעצמו, ולכן ריענון תצוגה קל כל דקה. אין כאן קריאה לשרת. */
-setInterval(() => { if (appts.length) render(); }, 60000);
+   להאדים מעצמו, ולכן ריענון תצוגה קל כל דקה. אין כאן קריאה לשרת.
+
+   ⚠️ לא בלשונית ההגדרות. שם אין סלוטים אדומים להאדים, ויש טפסים
+   שממלאים. גם עם שחזור הערכים, בנייה מחדש תוך כדי הקלדה גורמת
+   להבהוב ועלולה לשבש מקלדת של נייד. */
+setInterval(() => { if (appts.length && state.tab !== 'settings') render(); }, 60000);
 
 /* ══════════════════════════════════════════════════════════════════
    5. כתיבה — תמיד בטרנזקציה
@@ -1457,6 +1461,14 @@ async function renderSettings() {
   }
   if (!state.calMonth) state.calMonth = new Date(state.day.getFullYear(), state.day.getMonth(), 1);
 
+  /* ⚠️ המסך הזה נבנה מחדש מכל עדכון שמגיע מ-Firestore ומהפעימה של
+     כל דקה. כל בנייה כזו מחליפה את ה-HTML — כולל טופס הטיפול המיוחד,
+     על כל מה שהוקלד בו. בלי השמירה הזו, מי שממלא את הטופס מאבד את
+     הכול תוך פחות מדקה, בלי שום הודעה ובלי שיבין למה.
+     לכן: מצלמים את הטופס לפני, ומחזירים אחרי — כולל המוקד ומיקום
+     הסמן, כדי שהכתיבה תימשך באמצע מילה בלי לקפוץ. */
+  const shKeep = shSnapshot();
+
   host.innerHTML =
     '<div class="setnote">שינוי כאן משפיע מיד על מה שהמטופל רואה באפליקציה.</div>' +
     monthCalHtml(true) +
@@ -1467,6 +1479,7 @@ async function renderSettings() {
   paintDayEdit();
   wireWeekly();
   wireSpecial();
+  shRestore(shKeep);
 }
 
 function weeklyHtml() {
@@ -1585,6 +1598,48 @@ function specialHtml() {
   '</div>';
 }
 
+/* צילום הטופס והחזרתו — ראו ההסבר ב-renderSettings.
+   SH_FIELDS מוגדר פעם אחת כדי ששלושת המקומות לא יתפצלו בטעות. */
+const SH_FIELDS = ['shPhone','shId','shNote','shKind'];
+
+function shSnapshot() {
+  if (!$('shPhone')) return null;            // הטופס עוד לא קיים בדף
+  const ae = document.activeElement;
+  const inForm = ae && ae.id && SH_FIELDS.indexOf(ae.id) !== -1;
+  return {
+    phone: $('shPhone').value,
+    id:    $('shId').value,
+    note:  $('shNote').value,
+    kind:  $('shKind').value,
+    focus: inForm ? ae.id : null,
+    /* selectionStart קיים ב-input וב-textarea, לא ב-select */
+    selStart: inForm && typeof ae.selectionStart === 'number' ? ae.selectionStart : null,
+    selEnd:   inForm && typeof ae.selectionEnd   === 'number' ? ae.selectionEnd   : null
+  };
+}
+
+function shRestore(s) {
+  if (!s || !$('shPhone')) return;
+  $('shPhone').value = s.phone;
+  $('shId').value    = s.id;
+  $('shNote').value  = s.note;
+  $('shKind').value  = s.kind;
+  if (!s.focus) return;
+  const el = $(s.focus);
+  if (!el) return;
+  el.focus();
+  if (s.selStart != null && typeof el.setSelectionRange === 'function') {
+    try { el.setSelectionRange(s.selStart, s.selEnd); } catch (e) {}
+  }
+}
+
+function shClear() {
+  if (!$('shPhone')) return;
+  $('shPhone').value = '';
+  $('shId').value    = '';
+  $('shNote').value  = '';
+}
+
 function wireSpecial() {
   const add = $('shAdd');
   if (!add) return;
@@ -1612,6 +1667,9 @@ function wireSpecial() {
          ימלא ת"ז ונייד אחר. alias_of מסמן שזו אותה רשומה. */
       if (idn) await setDoc(doc(db, 'special_handling', idn),
                             Object.assign({}, rec, { alias_of: phone }));
+      /* מרוקנים לפני הבנייה מחדש: shSnapshot יצלם טופס ריק, ולכן
+         הרשומה שנשמרה לא תישאר תלויה בשדות ותיראה כאילו לא נוספה. */
+      shClear();
       await loadSpecial();
       renderSettings();
       toast('נוסף לרשימה');
