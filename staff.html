@@ -2925,8 +2925,13 @@ function openManual(from, preset, mode) {
     // אם השעה שנבחרה מהיומן כבר לא זמינה במשך שנבחר — מנקים אותה
     if (pick.time && !box.querySelector('[data-t="'+pick.time+'"]')) pick.time = null;
   };
-  /* מצב "חידוש מרשם בלבד" — אין תאריך לבחור ואין שעה. המשימה
-     נכנסת ליום העבודה הפתוח הבא, ובמקום בורר השעות מוצג לאן. */
+  /* מצב "חידוש מרשם בלבד" — אין תאריך לבחור ואין שעה.
+     ⚠️ קודם המשימה נכנסת ליום העבודה **הבא** (nextWorkingDay), כי אז
+     היא הייתה נעוצה לתאריך אחד וזה היה ההיגיון. מאז היא צפה: אם לא
+     בוצעה היום היא עוברת מעצמה למחר. לכן היא מתחילה **היום**.
+     ב-27.9.2026 זה בלט — ראשון, ואחריו שני וגם שלישי סגורים בחג
+     ורביעי הוא יום מכבי, אז ברירת המחדל קפצה ארבעה ימים קדימה
+     ל-1.10 ומשימה שנקבעה עכשיו פשוט לא נראתה. */
   let rxDay = null;
   const paintRx = () => {
     const on = $('mRx').checked;
@@ -2934,11 +2939,11 @@ function openManual(from, preset, mode) {
     $('mRxNoteWrap').style.display = on ? '' : 'none';
     $('mRxInfo').style.display     = on ? '' : 'none';
     if (on) {
-      rxDay = nextWorkingDay(new Date());
+      const t = clinicToday().split('-').map(Number);
+      rxDay = new Date(t[0], t[1]-1, t[2]);
       $('mRxInfo').textContent =
-        'המשימה תופיע בלוז של יום ' + DOW[rxDay.getDay()] + ' ' +
-        rxDay.getDate() + '.' + (rxDay.getMonth()+1) +
-        ' — בראש היום, ללא שעה. לא תיגזר לאודורו.';
+        'המשימה תופיע בראש היומן של היום, ללא שעה. אם לא תסומן כבוצעה — ' +
+        'היא תעבור מעצמה ליום הבא, וכך הלאה. לא תיגזר לאודורו.';
     }
   };
   $('mRx').onchange = paintRx;
@@ -2988,7 +2993,7 @@ function openManual(from, preset, mode) {
       const btn = $('mSave'); btn.disabled = true; btn.textContent = 'שומר…';
       const res = await createRxTask({
         first, last, phone, idnum: idnum ? idnum.padStart(9,'0') : '',
-        note: $('mRxNote').value.trim(), when: rxDay || nextWorkingDay(new Date())
+        note: $('mRxNote').value.trim(), when: rxDay || new Date()
       });
       btn.disabled = false; btn.textContent = 'שמור תור';
       if (res.ok) { close(); toast('המשימה נוספה ללוז'); }
