@@ -93,6 +93,10 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
 .daynav button{background:#fff;border:1px solid var(--line);border-radius:8px;
   width:38px;height:38px;font-size:17px;color:var(--navy);cursor:pointer;font-family:inherit}
 .daynav .lbl{font-weight:700;color:var(--navy);min-width:130px;text-align:center;font-size:15px}
+.daynav button#dToday{width:auto;padding:0 12px;font-size:14px;font-weight:600}
+/* כשכבר עומדים על היום אין לאן לחזור — הכפתור מעומעם ומנוטרל,
+   כדי שלא ייראה כמו פעולה שלא עושה כלום. */
+.daynav button#dToday[disabled]{opacity:.4;cursor:default}
 
 /* ── כרטיס תור ── */
 .list{padding:16px 20px 40px}
@@ -410,7 +414,7 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
     <div class="bar">
       <input type="search" id="search" placeholder="🔍 חיפוש לפי מספר נייד…" inputmode="numeric">
       <div class="daynav hidden" id="daynav">
-        <button id="dPrev">›</button><div class="lbl" id="dLbl"></div><button id="dNext">‹</button>
+        <button id="dPrev">›</button><div class="lbl" id="dLbl"></div><button id="dNext">‹</button><button id="dToday" title="חזרה להיום">היום</button>
       </div>
       <button class="btn-add" id="addBtn">+ תור ידני</button>
     </div>
@@ -1317,6 +1321,16 @@ const shiftDay = (n) => {
 };
 $('dPrev').onclick = () => shiftDay(-1);
 $('dNext').onclick = () => shiftDay(1);
+
+/* חזרה להיום. "היום" הוא התאריך בגבעתיים ולא במכשיר — אותו מקור
+   שממנו נגזרות המשימות הצפות, אחרת השניים היו יכולים להיפרד. */
+const goToday = () => {
+  const t = clinicToday().split('-').map(Number);
+  state.day = new Date(t[0], t[1]-1, t[2]);
+  state.calMonth = new Date(t[0], t[1]-1, 1);
+  render();
+};
+$('dToday').onclick = goToday;
 $('addBtn').onclick = () => openManual(null);
 
 $('adsExport').onclick = () => adsExport();
@@ -1352,6 +1366,7 @@ function render() {
   $('nCanc').textContent = appts.filter(a => a.status === 'cancelled').length;
   const d = state.day;
   $('dLbl').textContent = DOW[d.getDay()] + ' ' + d.getDate() + '.' + (d.getMonth()+1);
+  $('dToday').disabled = isoOf(d) === clinicToday();
   paintAdsBanner();
 
   // לשונית היומן: לוח חודשי + כל היום, פנויים ותפוסים כאחד
