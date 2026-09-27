@@ -655,6 +655,43 @@ const hhmmOf  = (d) => pad(d.getHours())+':'+pad(d.getMinutes());
 const unitKey = (d) => pad(d.getHours())+pad(d.getMinutes());
 const toMin   = (s) => { const [h,m]=s.split(':').map(Number); return h*60+m; };
 
+/* ── שעון המרפאה ──────────────────────────────────────────────────
+   new Date(y, mo, d, h, mi) בונה שעה לפי אזור הזמן של המכשיר. מסך
+   הצוות רץ בדרך כלל ממחשב המרפאה, שתמיד על שעון ישראל, ולכן זה לא
+   נצפה כאן — אבל מי שנכנס אליו מחו"ל היה שומר תורים בשעה אחרת.
+   באפליקציית המטופל זה כן קרה, ב-22.9.2026: מטופל על UTC+4 בחר
+   09:30 ונרשם 08:30, שולם והועתק לאודורו בשעה הלא נכונה.
+   ⚠️ בלי היסט קבוע — ישראל עוברת לשעון חורף ב-25.10.2026. */
+const CLINIC_TZ = 'Asia/Jerusalem';
+const _tzFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: CLINIC_TZ, hour12: false,
+  year:'numeric', month:'2-digit', day:'2-digit',
+  hour:'2-digit', minute:'2-digit', second:'2-digit'
+});
+function _tzParts(ms) {
+  const o = {};
+  _tzFmt.formatToParts(new Date(ms)).forEach(x => { o[x.type] = x.value; });
+  return o;
+}
+function clinicOffsetMs(ms) {
+  const p = _tzParts(ms);
+  return Date.UTC(+p.year, +p.month-1, +p.day, (+p.hour)%24, +p.minute, +p.second) - ms;
+}
+/* Date של התאריך והשעה האלה בשעון המרפאה. mo הוא 1–12. */
+function clinicDate(y, mo, d, h, mi) {
+  const naive = Date.UTC(y, mo-1, d, h||0, mi||0, 0);
+  let ms = naive;
+  for (let i = 0; i < 2; i++) ms = naive - clinicOffsetMs(ms);
+  return new Date(ms);
+}
+/* 'YYYY-MM-DD' של רגע נתון בשעון המרפאה */
+function clinicISO(dateObj) {
+  const p = _tzParts(+dateObj);
+  return p.year + '-' + p.month + '-' + p.day;
+}
+/* היום של המרפאה כרגע — הבסיס לגלגול המשימות הצפות */
+const clinicToday = () => clinicISO(new Date());
+
 const dateOf = (a) => a.slot_start && a.slot_start.toDate ? a.slot_start.toDate()
                                                           : new Date(a.slot_start);
 const stampOf = (v) => !v ? null : (v.toDate ? v.toDate() : new Date(v));
@@ -669,7 +706,50 @@ const stampOf = (v) => !v ? null : (v.toDate ? v.toDate() : new Date(v));
        שצריך להופיע ב-Q-Flow של המרפאה
      · מוצגת בראש היום בלי שעה, ולא במיקום בציר הזמן
    ─────────────────────────────────────────────────────────────── */
+const DOWS = ['א','ב','ג','ד','ה','ו','ש'];
+/* תווית תאריך קומפקטית לכרטיס: "א 27.9.26" */
+const dayLabel = (d) => DOWS[d.getDay()] + ' ' + d.getDate() + '.' +
+                        (d.getMonth()+1) + '.' + String(d.getFullYear()).slice(2);
+
 const isRxTask = (a) => !!(a && a.rx_task);
+
+/* ── באיזה יום המשימה מופיעה ──────────────────────────────────────
+   משימה אינה תור: אין לה שעה, ואם לא בוצעה היום היא עדיין צריכה
+   להיעשות מחר. לכן היא אינה נעוצה לתאריך אלא **צפה**:
+
+     · לא בוצעה  → מופיעה במאוחר מבין תאריך ההתחלה ובין היום.
+                   כלומר עד שמגיע תאריך ההתחלה היא נראית שם כתצוגה
+                   מקדימה, ומאותו יום ואילך היא עוברת להיום, כל יום,
+                   עד שמסמנים אותה.
+     · בוצעה     → נשארת ביום שבו סומנה. היומן של אותו יום צריך
+                   להישאר רישום נכון של מה שבאמת נעשה בו.
+
+   ⚠️ הגלגול מחושב כאן, ברגע הצגת היומן. אין תהליך שרץ בחצות ואין
+      מה שיכול להיכשל בלילה: גם אם המחשב היה כבוי שבוע, המשימה
+      תהיה שם ביום שבו תפתח את המסך.
+
+   slot_start נשאר תאריך ההתחלה — הוא גם מה שמחזיק את המשימה
+   בשאילתה, שממוינת לפי השדה הזה. */
+function rxDayIso(a) {
+  const done = (a.flags || {}).rx_done_at;
+  if (done) return clinicISO(stampOf(done));
+  /* ⚠️ שני הצדדים חייבים להימדד באותו שעון. isoOf קורא את המכשיר,
+     clinicToday את גבעתיים — וערבוב ביניהם הזיז את המשימה ביום שלם
+     למי שפתח את המסך מחו"ל. שניהם clinicISO. */
+  const start = clinicISO(dateOf(a));
+  const today = clinicToday();
+  return start > today ? start : today;
+}
+const rxIsOpen = (a) => !(a.flags || {}).rx_done_at && a.status !== 'cancelled';
+
+/* מה כתוב בפינת התאריך של כרטיס משימה */
+function rxWhenLabel(a) {
+  const done = (a.flags || {}).rx_done_at;
+  if (done) return 'בוצעה ' + dayLabel(stampOf(done));
+  const start = clinicISO(dateOf(a));
+  if (start > clinicToday()) return 'מ־' + dayLabel(dateOf(a));
+  return 'ללא שעה';
+}
 
 function unitsOf(appt) {
   if (isRxTask(appt)) return [];   // משימה אינה תופסת סלוט
@@ -973,8 +1053,10 @@ async function reviveAppt(a) {
    ומשמשת לקיבוץ לפי יום בלבד; היא לעולם אינה מוצגת.
    ─────────────────────────────────────────────────────────────── */
 async function createRxTask(data) {
-  const when = new Date(data.when);
-  when.setHours(0, 0, 0, 0);
+  /* חצות בשעון המרפאה. זהו תאריך ההתחלה של המשימה — ממנו ואילך
+     היא צפה קדימה עד שתסומן. ראו rxDayIso. */
+  const src = new Date(data.when);
+  const when = clinicDate(src.getFullYear(), src.getMonth()+1, src.getDate(), 0, 0);
   const id = crypto.randomUUID();
 
   const appt = {
@@ -1128,7 +1210,9 @@ async function rescheduleAppt(appt, data) {
    מפילות אותה בכישלון: עדיף תפיסה לא מעודכנת מאשר הזזה שנכשלה. */
 
 function claimUntil(when) {
-  return new Date(when.getFullYear(), when.getMonth(), when.getDate() + 1, 0, 0, 0);
+  /* חצות בגבעתיים של היום שאחרי התור, ולא חצות אצל מי שמריץ את המסך */
+  const iso = clinicISO(when).split('-').map(Number);
+  return clinicDate(iso[0], iso[1], iso[2] + 1, 0, 0);
 }
 
 /* קובע או מאריך תפיסה. createIfMissing=false מעדכן רק תפיסה קיימת —
@@ -1788,7 +1872,8 @@ function monthCalHtml(forSettings) {
   const m = state.calMonth;
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
   const days  = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
-  const today = new Date(); today.setHours(0,0,0,0);
+  const t0 = clinicToday().split('-').map(Number);
+  const today = new Date(t0[0], t0[1]-1, t0[2]);   // היום לפי גבעתיים
 
   // סיכום מצב לכל יום — נקודות צבע קטנות מתחת למספר
   const byDay = {};
@@ -1860,11 +1945,14 @@ function paintTimeline() {
   html += freedNoteHtml(schedule.overrides[iso], iso);
   html += dupNoteHtml(schedule.overrides[iso], d, iso);
 
-  /* משימות חידוש מרשם — בראש היום, בלי שעה ולפני ציר הזמן.
-     הן אינן משתתפות בציר עצמו כי אין להן מיקום בו. */
-  const rx = dayAppts.filter(isRxTask);
+  /* משימות — בראש היום, בלי שעה ולפני ציר הזמן.
+     ⚠️ נבחרות מכל התורים ולא מ-dayAppts: משימה צפה ואינה שייכת
+     לתאריך שנשמר בה. ראו rxDayIso. */
+  const rx = appts.filter(a => isRxTask(a) && a.status !== 'cancelled' && rxDayIso(a) === iso);
   if (rx.length) {
-    html += '<div class="rxhdr">משימות להיום · ' + rx.length + '</div>';
+    const openN = rx.filter(rxIsOpen).length;
+    html += '<div class="rxhdr">משימות · ' + rx.length +
+            (openN < rx.length ? ' · ' + (rx.length - openN) + ' בוצעו' : '') + '</div>';
     rx.forEach(a => { html += cardHtml(a); });
   }
 
@@ -2266,8 +2354,12 @@ function cardHtml(a) {
       '<div class="track"></div>' +
     '</div>';
 
+  /* ⚠️ התאריך מופיע על כל כרטיס, לא רק השעה. בתוצאות חיפוש אין
+     כותרת יום מעל הכרטיסים, ולכן הדבר היחיד שנראה כתאריך היה חותמת
+     "התור נקבע" — שהיא תאריך היצירה. ב-27.9.2026 זה הוביל לחיפוש
+     אחרי משימה ביום הלא נכון. */
   return '<div class="card '+st+'" data-card="'+a._id+'">' +
-    '<div class="hd"><span class="when">'+hhmmOf(d)+' · '+a.slot_duration_min+' דק׳</span>' +
+    '<div class="hd"><span class="when">'+dayLabel(d)+' · '+hhmmOf(d)+' · '+a.slot_duration_min+' דק׳</span>' +
       '<span class="name">'+esc(svcName)+'</span></div>' +
     fields +
     (a.patient_note ? '<div class="note">הערת המטופל: '+esc(a.patient_note)+'</div>' : '') +
@@ -2290,8 +2382,8 @@ function rxCardHtml(a) {
 
   return '<div class="card rx '+(done?'green':'orange')+'" data-card="'+a._id+'">' +
     '<div class="hd">' +
-      '<span class="when">חידוש מרשם</span>' +
-      '<span class="name">ללא שעה · משימה</span>' +
+      '<span class="when">' + esc(rxWhenLabel(a)) + '</span>' +
+      '<span class="name">חידוש מרשם · משימה</span>' +
     '</div>' +
     '<div class="fields">' +
       '<div class="row">' +
@@ -2868,7 +2960,7 @@ function openManual(from, preset, mode) {
       if (!pick.time) return;
       const [Y,M,D] = pick.date.split('-').map(Number);
       const [H,Mi]  = pick.time.split(':').map(Number);
-      const when = new Date(Y, M-1, D, H, Mi, 0, 0);
+      const when = clinicDate(Y, M, D, H, Mi);   // שעון המרפאה
       const btn = $('mSave'); btn.disabled = true; btn.textContent = 'מעדכן…';
       const res = await rescheduleAppt(moving, {
         when, duration: +$('mDur').value, offHours: $('mForce').checked
@@ -2906,7 +2998,7 @@ function openManual(from, preset, mode) {
 
     const [y,mo,dd] = pick.date.split('-').map(Number);
     const [h,mi]    = pick.time.split(':').map(Number);
-    const when = new Date(y, mo-1, dd, h, mi, 0, 0);
+    const when = clinicDate(y, mo, dd, h, mi);   // שעון המרפאה
 
     const btn = $('mSave'); btn.disabled = true; btn.textContent = 'שומר…';
     const res = await createManual({

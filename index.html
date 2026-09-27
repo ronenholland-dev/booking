@@ -725,6 +725,76 @@ const Debug = (() => {
 
 
 /* ══════════════════════════════════════════════════════════════════
+   5ב. שעון המרפאה
+   ⚠️⚠️ הבאג שהכי קשה לראות באפליקציה הזו.
+
+   השעה שהמטופל בוחר היא שעה **בגבעתיים**. אבל
+       const t = new Date(date); t.setHours(h, m, 0, 0);
+   קובע אותה לפי אזור הזמן של **המכשיר שלו**. מטופל בחו"ל, או עם
+   טלפון שאזור הזמן בו שגוי, נרשם בשעה אחרת לגמרי — בלי שגיאה, בלי
+   אזהרה, ובלי שהוא או המרפאה ידעו.
+
+   קרה בפועל ב-22.9.2026: מטופל שהשעון שלו היה על UTC+4 בחר 09:30
+   ל-27.9. נשמר 05:30Z, שהם 08:30 בישראל. הוא קיבל אישור על 09:30,
+   תפס את יחידות 09:30, שילם — והתור נרשם והועתק לאודורו ל-08:30.
+   הוא גם נעלם מתחתית היומן תחת "מחוץ לשעות הפעילות", כי 08:30 נמצא
+   לפני פתיחת יום ראשון.
+
+   ⚠️ ואסור לקבע 03:00+. ישראל עוברת לשעון חורף ב-25.10.2026, ומאותו
+      רגע היסט קבוע היה שובר כל תור — הפעם אצל כולם, לא רק בחו"ל.
+      לכן מודדים את ההיסט האמיתי של Asia/Jerusalem לאותו רגע.
+   ══════════════════════════════════════════════════════════════════ */
+const CLINIC_TZ = 'Asia/Jerusalem';
+
+const _tzFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: CLINIC_TZ, hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit'
+});
+
+/* כמה שעון המרפאה מקדים את UTC ברגע נתון, במילישניות */
+function clinicOffsetMs(ms) {
+  const p = {};
+  _tzFmt.formatToParts(new Date(ms)).forEach(x => { p[x.type] = x.value; });
+  /* hour12:false מחזיר '24' בחצות בחלק מהמנועים */
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+  return asUTC - ms;
+}
+
+/* Date של התאריך והשעה האלה **בשעון המרפאה**, ללא תלות במכשיר.
+   y/mo/d הם מספרים אמיתיים (mo הוא 1–12), hhmm הוא 'HH:MM'.
+   שתי איטרציות: הראשונה מעריכה את ההיסט, השנייה מתקנת אותו במקרה
+   שהניחוש נפל בצד השני של מעבר שעון הקיץ. */
+function clinicDate(y, mo, d, hhmm) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const naive = Date.UTC(y, mo - 1, d, h, m, 0);
+  let ms = naive;
+  for (let i = 0; i < 2; i++) ms = naive - clinicOffsetMs(ms);
+  return new Date(ms);
+}
+
+/* אותו דבר מתוך אובייקט Date שמייצג יום (נלקחים ממנו רק י/ח/ש) */
+function clinicAt(dateObj, hhmm) {
+  return clinicDate(dateObj.getFullYear(), dateObj.getMonth() + 1, dateObj.getDate(), hhmm);
+}
+
+/* 'HH:MM' של רגע נתון בשעון המרפאה — לאימות ולתצוגה */
+function clinicHHMM(dateObj) {
+  const p = {};
+  _tzFmt.formatToParts(dateObj).forEach(x => { p[x.type] = x.value; });
+  return String((+p.hour) % 24).padStart(2, '0') + ':' + p.minute;
+}
+
+/* 'YYYY-MM-DD' של רגע נתון בשעון המרפאה */
+function clinicISO(dateObj) {
+  const p = {};
+  _tzFmt.formatToParts(dateObj).forEach(x => { p[x.type] = x.value; });
+  return p.year + '-' + p.month + '-' + p.day;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
    6. עזרי תאריך ולוח
    ══════════════════════════════════════════════════════════════════ */
 const Cal = (() => {
@@ -836,8 +906,10 @@ const Cal = (() => {
       }
       if (!fits) { m += step; continue; }
 
-      const when = new Date(date);
-      when.setHours(Math.floor(m/60), m%60, 0, 0);
+      /* ⚠️ בשעון המרפאה, לא בשעון המכשיר. אחרת סף ההתראה המוקדמת
+         (minLeadHours) נמדד מול שעון אחר, ומטופל בחו"ל היה רואה
+         שעות שכבר עברו — או לא רואה שעות פנויות לגמרי. */
+      const when = clinicAt(date, toHHMM(m));
       if (when.getTime() >= limit) out.push({ time: toHHMM(m) });
       m += durationMin;                 // ההצעה הבאה — ברגע שהתור הזה נגמר
     }
@@ -1340,7 +1412,11 @@ function paintMonth() {
   const m = state.calMonth;
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
   const days  = new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
-  const today = new Date(); today.setHours(0,0,0,0);
+  /* "היום" לפי התאריך בגבעתיים ולא לפי המכשיר. מטופל בחו"ל שהשעה
+     אצלו כבר אחרי חצות בעוד בישראל עדיין אתמול היה רואה לוח שמוסט
+     ביום שלם. */
+  const nowIso = clinicISO(new Date());
+  const today  = new Date(+nowIso.slice(0,4), +nowIso.slice(5,7)-1, +nowIso.slice(8,10));
   const maxD  = new Date(today.getTime() + CONFIG.horizonDays*864e5);
   const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const prevOk = first > thisMonth;
@@ -1505,15 +1581,29 @@ function submit() {
      כל המודול — כלומר את כל האפליקציה, בלי מסך שגיאה. */
   const phoneKey = normPhone(state.form.phone);
   /* התפיסה פגה בחצות של יום התור, כדי שמי שהתור שלו עבר יוכל לקבוע
-     שוב מיד ובלי שאיש ישחרר אותו ידנית. */
-  const until = new Date(state.selDate.getFullYear(), state.selDate.getMonth(),
-                         state.selDate.getDate() + 1, 0, 0, 0);
+     שוב מיד ובלי שאיש ישחרר אותו ידנית.
+     ⚠️ חצות **בגבעתיים**. קודם זו הייתה חצות אצל המטופל, כלומר
+     מטופל בחו"ל שוחרר בשעה אחרת מזו שהמרפאה מתכוונת אליה. */
+  const until = clinicDate(state.selDate.getFullYear(),
+                           state.selDate.getMonth() + 1,
+                           state.selDate.getDate() + 1, '00:00');
 
   const fail = (msg) => {
     btn.disabled = false;
     btn.textContent = label;
     alert(msg);
   };
+
+  /* ── רשת ביטחון אחרונה לפני הכתיבה ──────────────────────────────
+     מחזירים את הרגע שחושב בחזרה לשעון המרפאה ומוודאים שיצא בדיוק
+     השעה שהמטופל לחץ עליה. אם לא — משהו באזור הזמן השתבש, ועדיף
+     לא לקבוע תור מאשר לקבוע אותו לשעה שאיש לא התכוון אליה.
+     זו בדיקה שלא אמורה להיכשל לעולם; אם היא נכשלה, יש באג. */
+  if (clinicHHMM(appt.slot_start) !== state.selTime) {
+    Debug.log('אי-התאמת שעה', { chosen: state.selTime, computed: clinicHHMM(appt.slot_start) });
+    Track.step('booking_rejected', { reason: 'tz_mismatch' });
+    return fail(TEXTS.s5.errSave);
+  }
 
   (async () => {
     // 1. תפיסת המטופל — נכשלת אם כבר יש לו תור עתידי פעיל
@@ -1555,9 +1645,8 @@ function submit() {
 /* רשומת התור כפי שתיכתב ל-Firestore בשלב 2 (נספח א' במסמך מעקב הלידים) */
 function buildAppointment() {
   const s = svc(), lead = Lead.read() || {};
-  const start = new Date(state.selDate);
-  const [h,m] = state.selTime.split(':').map(Number);
-  start.setHours(h, m, 0, 0);
+  /* בשעון המרפאה. ראו את ההסבר המלא ליד clinicDate. */
+  const start = clinicAt(state.selDate, state.selTime);
   return {
     id: state.txId,
     /* ⚠️ אובייקט Date ולא מחרוזת. ה-SDK ממיר אותו אוטומטית ל-Timestamp
@@ -1565,6 +1654,14 @@ function buildAppointment() {
        שאילתות טווח על השדה הזה לא רואות את המסמך. */
     created_at: new Date(),
     slot_start: start,
+    /* ── ומה שהמטופל באמת ראה על המסך ───────────────────────────────
+       מחרוזת לא משנה את עצמה כשעוברים אזור זמן. ב-22.9.2026 דווקא
+       מפתחות היחידות ('0930') הם שגילו לנו מה המטופל בחר, כשה-Timestamp
+       כבר הצביע על שעה אחרת. שני השדות האלה עושים את אותו דבר במפורש:
+       הם עדות למה שהוצג ואושר, ובהם משווים כשיש ספק.
+       ⚠️ אלה שדות עדות בלבד. שאילתות טווח ממשיכות לרוץ על slot_start. */
+    slot_date: Cal.iso(state.selDate),
+    slot_time: state.selTime,
     slot_duration_min: s.durationMin,
     source: 'app',
     flags: {},
