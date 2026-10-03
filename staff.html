@@ -94,6 +94,12 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
   width:38px;height:38px;font-size:17px;color:var(--navy);cursor:pointer;font-family:inherit}
 .daynav .lbl{font-weight:700;color:var(--navy);min-width:130px;text-align:center;font-size:15px}
 .daynav button#dToday{width:auto;padding:0 12px;font-size:14px;font-weight:600}
+.dayhours{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;
+  padding:12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc}
+.dayhours label{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--navy);font-weight:600}
+.dayhours input[type=time]{font-family:inherit;font-size:15px;padding:6px 8px;
+  border:1px solid var(--line);border-radius:8px}
+.dayhours .hint{flex-basis:100%;margin:0;font-size:13px}
 /* כשכבר עומדים על היום אין לאן לחזור — הכפתור מעומעם ומנוטרל,
    כדי שלא ייראה כמו פעולה שלא עושה כלום. */
 .daynav button#dToday[disabled]{opacity:.4;cursor:default}
@@ -1831,13 +1837,50 @@ function paintDayEdit() {
       '<div class="dayacts">' +
         (w ? '<button data-set="close">סגור את כל היום</button>' : '') +
         (!w || ov.closed ? '<button data-set="open">פתח את היום</button>' : '') +
+        /* ⚠️ קודם אפשר היה לקבוע שעות חריגות רק ליום **סגור**, כי הכפתור
+           היחיד שעשה את זה היה "פתח את היום". יום פתוח שצריך להתארך
+           פעם אחת — למשל שלישי שבו אין את הזום עם ענת, ואפשר לקבל
+           פרטיים עד 13:00 במקום 11:40 — לא היה ניתן לעריכה בכלל,
+           למרות ש-windowFor כבר ידע לקרוא open/close מחריג יומי.
+           ב-6.10.2026 זה חייב עריכה ידנית במסד. */
+        (w ? '<button data-set="hours">שעות חריגות ליום זה</button>' : '') +
         (ov.open || ov.closed || blocked.size
            ? '<button data-set="reset">החזר לברירת המחדל</button>' : '') +
       '</div>' +
+      /* שורת העריכה נפתחת מתחת לכפתורים, עם השעות הנוכחיות בפנים.
+         שדות time ולא prompt — עקבי עם עורך הלוז השבועי שבאותו מסך,
+         ומונע את החלונית שחלק מהדפדפנים חוסמים. */
+      (w ? '<div class="dayhours" id="dayHours" hidden>' +
+             '<label>פתיחה <input type="time" id="dhOpen"  value="'+esc(w.open)+'"></label>' +
+             '<label>סגירה <input type="time" id="dhClose" value="'+esc(w.close)+'"></label>' +
+             '<button class="primary" id="dhSave">שמור ליום זה</button>' +
+             '<button id="dhCancel">ביטול</button>' +
+             '<div class="hint">חל על ' + esc(label) + ' בלבד. שאר הימים לא משתנים. ' +
+               'פגישות קבועות שביום הזה יישארו חוסמות — לביטול שלהן יש "בטל לשבוע זה" ביומן.</div>' +
+           '</div>' : '') +
       (w ? '<div class="hint">לחיצה על שעה חוסמת אותה למטופלים. שעה תפוסה בתור לא ניתנת לחסימה.</div>' +
            '<div class="units">' + slots + '</div>'
          : '<div class="hint">היום סגור. "פתח את היום" יאפשר לקבוע בו תורים.</div>') +
     '</div>';
+
+  const dhSave = $('dhSave');
+  if (dhSave) {
+    $('dhCancel').onclick = () => { $('dayHours').hidden = true; };
+    dhSave.onclick = () => {
+      const o = $('dhOpen').value, c = $('dhClose').value;
+      if (!o || !c)  { toast('נא למלא שעת פתיחה ושעת סגירה'); return; }
+      if (o >= c)    { toast('שעת הסגירה חייבת להיות אחרי הפתיחה'); return; }
+      /* צמצום היום עלול להשאיר תור קיים מחוץ לשעות. לא חוסמים את
+         הפעולה — לפעמים בדיוק זו הכוונה — אבל אומרים את זה בפירוש,
+         כי התור הזה יירד לתחתית היומן תחת "מחוץ לשעות הפעילות". */
+      const out = [...taken].filter(u => u < pad(+o.slice(0,2)) + o.slice(3,5) ||
+                                         u >= pad(+c.slice(0,2)) + c.slice(3,5)).length;
+      if (out && !confirm(out + ' יחידות תפוסות בתורים ייפלו מחוץ לשעות החדשות.\n' +
+          'התורים עצמם לא יבוטלו — הם יוצגו ביומן תחת "מחוץ לשעות הפעילות".\n\nלהמשיך?')) return;
+      saveOverride(iso, { closed:false, open:o, close:c },
+                   'השעות עודכנו ליום זה בלבד');
+    };
+  }
 
   box.querySelectorAll('[data-unit]:not([disabled])').forEach(b => b.onclick = () => {
     const k = b.dataset.unit;
@@ -1853,6 +1896,11 @@ function paintDayEdit() {
       if (taken.size && !confirm('ביום זה כבר יש ' + taken.size/1 + ' יחידות תפוסות בתורים.\n' +
           'סגירת היום לא מבטלת אותם — היא רק מונעת קביעת תורים חדשים.\n\nלהמשיך?')) return;
       saveOverride(iso, { closed:true, open:null, close:null });
+      return;
+    }
+    if (act === 'hours') {
+      const row = $('dayHours');
+      if (row) { row.hidden = false; $('dhOpen').focus(); }
       return;
     }
     if (act === 'open') {
