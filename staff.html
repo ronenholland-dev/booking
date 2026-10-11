@@ -807,6 +807,20 @@ const fmtStamp = (v) => {
          pad(d.getFullYear() % 100) + ' · ' + hhmmOf(d);
 };
 
+/* מי ביצע את הפעולה. ב-Firestore נשמר המייל המלא, כי הוא המזהה
+   ש-firestore.rules מאמת בפועל ואין להשפיע עליו מצד הדפדפן.
+   בכרטיס מוצג שם בעברית, כי מייל באמצע שורת היסטוריה הוא
+   רעש. מייל שאינו ברשימה מוצג לפי החלק שלפני ה-@, ולא נבלע. */
+const STAFF_NAMES = {
+  'ronenholland@gmail.com': 'רוני',
+  '111atalya@gmail.com':    'עתליה'
+};
+const whoLabel = (email) => {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return '';
+  return STAFF_NAMES[e] || e.split('@')[0];
+};
+
 /* ══════════════════════════════════════════════════════════════════
    3. כניסה
    ══════════════════════════════════════════════════════════════════ */
@@ -1021,7 +1035,13 @@ async function doCancel(a, code, label) {
         status: 'cancelled',
         status_changed_at: Timestamp.now(),
         cancel_code: code,
-        cancel_reason: label
+        cancel_reason: label,
+        /* מי ביטל. עד 10.2026 נרשמה רק השעה והסיבה, ולא היה אפשר
+           לדעת בדיעבד מי לחץ — בשונה מ-created_by בקביעה, מ-moves[].by
+           בהזזה ומ-by בטיפול מיוחד. cancelled_at נפרד מ-status_changed_at
+           כדי שהחזרה ליומן וביטול נוסף לא ימחקו את המקור. */
+        cancelled_by: auth.currentUser ? auth.currentUser.email : null,
+        cancelled_at: Timestamp.now()
       });
     });
     await releaseClaim(a);          // אחרת המטופל נעול אף שאין לו תור
@@ -1047,7 +1067,8 @@ async function reviveAppt(a) {
       tx.set(dayRef, { date: dIso, units: next }, { merge: true });
       tx.update(doc(db,'appointments',a._id), {
         status: 'pending', status_changed_at: Timestamp.now(),
-        cancel_reason: null, cancel_code: null
+        cancel_reason: null, cancel_code: null,
+        cancelled_by: null, cancelled_at: null
       });
     });
     await setClaim(a, dateOf(a), true);   // התור חזר — והתפיסה איתו
@@ -1084,6 +1105,7 @@ async function createRxTask(data) {
     staff_note: data.note || null,
     status: 'pending', status_changed_at: null,
     cancel_reason: null, cancel_code: null,
+    cancelled_by: null, cancelled_at: null,
     off_hours: false,
     source: 'manual', created_by: auth.currentUser ? auth.currentUser.email : null,
     flags: {},
@@ -1277,6 +1299,7 @@ async function createManual(data) {
     patient_phone: data.phone,
     patient_id_number: data.idnum || null, patient_note: data.note || null,
     status: 'pending', status_changed_at: null, cancel_reason: null, cancel_code: null,
+    cancelled_by: null, cancelled_at: null,
     // תור שנקבע מחוץ לשעות הקבלה — מסומן כדי שיהיה אפשר לראות
     // אחר כך כמה חריגות היו, ולא רק לזכור שהיו
     off_hours: !!data.offHours,
@@ -2011,12 +2034,23 @@ function paintTimeline() {
   /* משימות — בראש היום, בלי שעה ולפני ציר הזמן.
      ⚠️ נבחרות מכל התורים ולא מ-dayAppts: משימה צפה ואינה שייכת
      לתאריך שנשמר בה. ראו rxDayIso. */
+  /* ── ערובה שאף תור לא נעלם ────────────────────────────────────
+     כל תור שמצויר נרשם כאן, ובסוף הפונקציה משווים מול הרשימה
+     המלאה של היום. אם נשאר משהו שלא צויר — הוא מוצג בכל זאת,
+     עם אזהרה. זה לא תחליף לתיקון מסלול שבור: זו רשת שמבטיחה
+     שתקלה כזו תהיה **גלויה** ולא שקטה.
+     ⚠️ כפיית שעה נועדה בדיוק לזה — תור שנקבע ידנית בניגוד ללוז
+     חייב להופיע. אם אי פעם ייפתח מסלול חדש שמפספס תור, כאן
+     הוא ייתפס. */
+  const shown = new Set();
+  const card  = (a) => { shown.add(a._id); return cardHtml(a); };
+
   const rx = appts.filter(a => isRxTask(a) && a.status !== 'cancelled' && rxDayIso(a) === iso);
   if (rx.length) {
     const openN = rx.filter(rxIsOpen).length;
     html += '<div class="rxhdr">משימות · ' + rx.length +
             (openN < rx.length ? ' · ' + (rx.length - openN) + ' בוצעו' : '') + '</div>';
-    rx.forEach(a => { html += cardHtml(a); });
+    rx.forEach(a => { html += card(a); });
   }
 
   if (!w) {
@@ -2073,7 +2107,7 @@ function paintTimeline() {
     while (cursor < closeM) {
       const next = q[0];
       if (next && next.at <= cursor) {
-        html += next.appt ? cardHtml(next.appt) : eventHtml(next.ev, iso, next.evIdx);
+        html += next.appt ? card(next.appt) : eventHtml(next.ev, iso, next.evIdx);
         cursor = Math.max(cursor + 1, next.to);
         q.shift();
         continue;
@@ -2082,6 +2116,31 @@ function paintTimeline() {
       if (gapEnd > cursor) html += gapHtml(cursor, gapEnd, blocked, labelFor);
       cursor = gapEnd;
     }
+
+    /* ── מה שנשאר בתור אחרי שעת הסגירה ────────────────────────────
+       ⚠️ הלולאה שלמעלה מתקדמת רק כל עוד cursor < closeM. פריט שעדיין
+       בתור ברגע שהסמן הגיע לשעת הסגירה פשוט נשמט — בלי שגיאה ובלי
+       שום סימן שהוא קיים.
+
+       זה קרה ב-11.10.2026: תור הוזז לשלישי 13.10 ב-11:30, בתוך רצועת
+       ה-admin של 11:00–11:40. הרצועה נרשמה, הסמן קפץ ל-11:40 — שהיא
+       בדיוק שעת הסגירה של שלישי — והלולאה נעצרה. שני תורים (11:20
+       ו-11:30) נעלמו מהיומן לגמרי. הם נמצאו רק בחיפוש לפי נייד.
+
+       outside לא תופס אותם: הם **מתחילים** בתוך שעות הפעילות ולכן
+       סווגו inside. הם רק נגמרים אחריהן.
+
+       מכאן הם מוצגים תמיד. זה גם מחזיר לתצוגה אירוע קבוע שכולו אחרי
+       שעת הסגירה — למשל הזום עם ענת ב-12:00 בימי שלישי — שעד כה לא
+       נראה ביומן כלל, ולכן גם לא היה אפשר ללחוץ עליו "בטל לשבוע זה". */
+    if (q.length) {
+      html += '<div class="dayhdr" style="margin-top:20px">מעבר לשעת הסגירה</div>';
+      while (q.length) {
+        const x = q.shift();
+        html += x.appt ? card(x.appt) : eventHtml(x.ev, iso, x.evIdx);
+      }
+    }
+
     if (!occ.length && !outside.length) {
       html += '<div class="empty" style="padding:20px">כל היום פנוי</div>';
     }
@@ -2089,7 +2148,19 @@ function paintTimeline() {
 
   if (outside.length) {
     html += '<div class="dayhdr" style="margin-top:20px">מחוץ לשעות הפעילות</div>';
-    outside.forEach(a => { html += cardHtml(a); });
+    outside.forEach(a => { html += card(a); });
+  }
+
+  /* ── הערובה ───────────────────────────────────────────────────
+     כל תור של היום חייב להיות באחת הקבוצות שצוירו. אם לא —
+     מציגים אותו כאן ולא מוותרים עליו. */
+  const expected = rx.concat(dayAppts.filter(a => !isRxTask(a)));
+  const missing  = expected.filter(a => !shown.has(a._id));
+  if (missing.length) {
+    console.warn('תורים שלא שובצו בציר הזמן', missing.map(a => a._id));
+    html += '<div class="dayhdr missinghdr" style="margin-top:20px">' +
+            '⚠️ ' + missing.length + ' תורים לא שובצו בציר — מוצגים כאן</div>';
+    missing.forEach(a => { html += cardHtml(a); });
   }
 
   box.innerHTML = html;
@@ -2358,7 +2429,14 @@ function cardHtml(a) {
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
     // הנוסח נבחר לפי סיבת הביטול — ראו cancelWaKind
     checks = (booked ? '<div class="checks">' + booked +
-        (a.status_changed_at ? doneRow('התור בוטל', a.status_changed_at) : '') +
+        /* תור שבוטל לפני 10.2026 אינו נושא זהות — מוצג כפי שהיה,
+           בלי לנחש מי ביצע ובלי להשתיק את עובדת הביטול. */
+        (a.status_changed_at || a.cancelled_at
+          ? doneRow(whoLabel(a.cancelled_by)
+                      ? 'התור בוטל · ' + whoLabel(a.cancelled_by)
+                      : 'התור בוטל',
+                    a.cancelled_at || a.status_changed_at)
+          : '') +
       '</div>' : '') +
       '<div class="acts">' +
       wa(cancelWaKind(a),'💬 שלח הודעת ביטול','go') +
