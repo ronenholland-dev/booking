@@ -496,7 +496,14 @@ const CFG = {
 
   lateHours:    2,        // אחרי כמה שעות ללא תגובה הסלוט הופך לאדום
   baseGridMin:  10,       // חייב להיות זהה ל-booking.html
-  historyDays:  14,       // כמה ימים אחורה נטענים למסך
+  /* כמה ימים אחורה נטענים ליומן.
+     היה 14, וזה התברר כקצר מדי: ב-13.10.2026 לא ניתן היה לפתוח
+     מטופל מ-27.9 כדי לקבוע לו תור המשך — והמרפאה היא מרפאת מעקבים,
+     שבה בדיוק התור הישן הוא זה שמחפשים.
+     בנפח הנוכחי (כ-150 תורים בחודש) שנה שלמה היא כ-1,800 מסמכים,
+     טעינה אחת בכניסה. ⚠️ החיפוש לפי נייד אינו תלוי במספר הזה כלל —
+     הוא שואל את Firestore ישירות. ראו runRemoteSearch. */
+  historyDays:  365,
   /* ⚠️ רשת ביטחון בלבד — מקור האמת הוא calendar_settings/weekly.
      חייב להיות זהה ל-index.html. ב-19.9.2026 קוצר שלישי ל-11:40
      (הזום עם ענת ב-12:00) ושתי הטבלאות נשארו 12:30 בלי שאיש שם לב. */
@@ -871,7 +878,7 @@ function handleMarkParam() {
 }
 function applyPendingMark() {
   if (!pendingMark) return;
-  const a = appts.find(x => x._id === pendingMark);
+  const a = apptById(pendingMark);
   if (!a) return;                       // עוד לא נטען — ננסה בעדכון הבא
   const id = pendingMark; pendingMark = null;
   if (a.flags && a.flags.contacted_at) {
@@ -900,8 +907,17 @@ function applyPendingMark() {
    שפתוח בו המסך, בלי רענון.
    ══════════════════════════════════════════════════════════════════ */
 let appts = [];
-const state = { tab: 'todo', day: new Date(), search: '', calMonth: null };
+const state = { tab: 'todo', day: new Date(), search: '', calMonth: null,
+                /* תורים שחזרו מחיפוש ישיר ואינם בטווח הטעינה של היומן */
+                searchHits: [] };
 state.day.setHours(0,0,0,0);
+
+/* ── תור לפי מזהה ────────────────────────────────────────────────
+   חיפוש לפי נייד מחזיר גם תורים ישנים שאינם בטווח הטעינה של היומן.
+   הם יושבים ב-state.searchHits בלבד, ולכן כל פעולה על כרטיס חייבת
+   לחפש בשני המקומות — אחרת כפתור על תוצאת חיפוש ישנה לא יעשה כלום. */
+const apptById = (id) => appts.find(x => x._id === id) ||
+                         (state.searchHits || []).find(x => x._id === id) || null;
 
 /* ── למה אין כאן where על התאריך ─────────────────────────────────────
    ב-Firestore, פילטר טווח מול Timestamp לא מתאים למסמכים שבהם השדה
@@ -914,7 +930,9 @@ state.day.setHours(0,0,0,0);
    בנפח של המרפאה (מאות תורים בשנה) זה זול לגמרי, וחסין לתקלה הזו.
    ─────────────────────────────────────────────────────────────────── */
 function subscribe() {
-  const q = query(collection(db,'appointments'), orderBy('slot_start','desc'), limit(400));
+  /* 400 לא הספיק לשנה. התקרה כאן היא רשת ביטחון מול טעינה אינסופית,
+     לא מנגנון סינון — הסינון האמיתי הוא לפי historyDays, בדפדפן. */
+  const q = query(collection(db,'appointments'), orderBy('slot_start','desc'), limit(2000));
   unsub = onSnapshot(q,
     (snap) => {
       const from = new Date();
@@ -1341,7 +1359,43 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelector('.bar').classList.toggle('hidden', state.tab === 'settings');
   render();
 });
-$('search').oninput = (e) => { state.search = e.target.value.replace(/\D/g,''); render(); };
+/* ── חיפוש לפי נייד ──────────────────────────────────────────────
+   שתי שכבות. הסינון המקומי מגיב על כל הקלדה ומכסה את מה שכבר נטען.
+   במקביל, ברגע שיש מספיק ספרות, נשלחת שאילתה ישירה ל-Firestore על
+   phone_norm — והיא אינה מוגבלת בזמן בכלל.
+
+   ⚠️ זה מה שמנתק את החיפוש מגודל המערכת. קודם החיפוש סינן את מה
+   שנטען, ולכן מטופל מלפני יותר מ-historyDays פשוט לא היה קיים
+   מבחינת המסך. עכשיו זו קריאה של מסמך-שניים, בלי קשר לכמה תורים
+   יש במסד.
+
+   ⚠️ phone_norm הושלם רטרואקטיבית ל-121 תורים ותיקים ב-13.10.2026.
+   תור בלי השדה הזה לא יימצא בשאילתה הישירה. */
+let searchTimer = null;
+$('search').oninput = (e) => {
+  state.search = e.target.value.replace(/\D/g,'');
+  state.searchHits = [];
+  render();
+  clearTimeout(searchTimer);
+  if (state.search.length < 7) return;
+  const q = state.search;
+  searchTimer = setTimeout(() => runRemoteSearch(q), 350);
+};
+
+async function runRemoteSearch(digits) {
+  const phone = normPhone(digits);
+  /* רק מספר שלם ותקין. חיפוש חלקי נשאר מקומי. */
+  if (!phone || state.search !== digits) return;
+  try {
+    const snap = await getDocs(query(collection(db,'appointments'),
+                                     where('phone_norm','==',phone)));
+    if (state.search !== digits) return;      // המשתמש המשיך להקליד
+    const have = new Set(appts.map(a => a._id));
+    state.searchHits = snap.docs.filter(d => !have.has(d.id))
+                                .map(d => Object.assign({ _id:d.id }, d.data()));
+    if (state.searchHits.length) render();
+  } catch (e) { console.error('חיפוש מרוחק נכשל', e); }
+}
 const shiftDay = (n) => {
   state.day.setDate(state.day.getDate() + n);
   // הלוח החודשי עוקב אחרי היום הנבחר כשעוברים חודש
@@ -1373,7 +1427,10 @@ $('adsLater').onclick = () => {
 function visible() {
   let list = appts.slice();
   if (state.search) {
-    return list.filter(a => (a.patient_phone||'').includes(state.search));
+    /* המקומיים והמרוחקים יחד, החדש למעלה — כשקובעים תור המשך
+       רוצים לראות קודם את הביקור האחרון. */
+    const local = list.filter(a => (a.patient_phone||'').includes(state.search));
+    return local.concat(state.searchHits || []).sort((x,y) => dateOf(y) - dateOf(x));
   }
   if (state.tab === 'cancelled') return list.filter(a => a.status === 'cancelled');
   if (state.tab === 'day') {
@@ -2626,7 +2683,7 @@ function waLink(a, kind) {
 const copyStep = {};   // מזהה תור → באיזה שדה אנחנו עומדים
 
 function paintCopyBar(id) {
-  const a = appts.find(x => x._id === id);
+  const a = apptById(id);
   const bar = document.querySelector('[data-bar="'+id+'"]');
   if (!a || !bar) return;
   const list = odoroFields(a);
@@ -2660,7 +2717,7 @@ function paintCopyBar(id) {
 }
 
 async function copyAct(act, id) {
-  const a = appts.find(x => x._id === id);
+  const a = apptById(id);
   if (!a) return;
   const list = odoroFields(a);
   if (act === 'close')   { copyStep[id] = 0; const b = document.querySelector('[data-bar="'+id+'"]'); if (b) b.classList.remove('on'); return; }
@@ -2893,7 +2950,7 @@ function wire(host) {
     };
   });
   host.querySelectorAll('[data-act]').forEach(b => {
-    const a = appts.find(x => x._id === b.dataset.id);
+    const a = apptById(b.dataset.id);
     if (!a) return;
     b.onclick = () => ({ cancel:cancelAppt, revive:reviveAppt, follow:openManual,
                          move:(x)=>openManual(x, null, 'move'),
@@ -2912,7 +2969,7 @@ function wire(host) {
   });
   host.querySelectorAll('[data-mark]').forEach(el => {
     el.addEventListener('click', () => {
-      const a = appts.find(x => x._id === el.dataset.mark);
+      const a = apptById(el.dataset.mark);
       if (a && !(a.flags && a.flags.contacted_at)) {
         setFlag(el.dataset.mark, 'contacted_at', true);
         toast('סומן שנשלחה הודעה ראשונה — לביטול, "ביטול סימון" בכרטיס');
@@ -2923,7 +2980,7 @@ function wire(host) {
   // אבל ברגע שהצ'קבוקס המאשר סומן — הסרגל נסגר ולא חוזר. בלי זה הוא
   // היה צץ מחדש אחרי כל רינדור, כולל עדכון שהגיע ממכשיר אחר.
   Object.keys(copyStep).forEach(id => {
-    const ap = appts.find(x => x._id === id), fl = (ap && ap.flags) || {};
+    const ap = apptById(id), fl = (ap && ap.flags) || {};
     if (fl.paid_entered_at || fl.copied_at) { copyStep[id] = 0; return; }
     if (copyStep[id] > 0 && host.querySelector('[data-bar="'+id+'"]')) paintCopyBar(id);
   });
