@@ -1287,6 +1287,99 @@ async function setClaim(appt, when, createIfMissing) {
 }
 
 /* משחרר תפיסה — רק אם היא באמת שייכת לתור הזה. */
+/* ── עריכת פרטי מטופל ─────────────────────────────────────────────
+   המטופל ממלא את הפרטים בעצמו, ולא תמיד במלואם. כאן מתקנים.
+
+   ⚠️ הנייד אינו שדה רגיל. הוא מפתח הזיהוי של כל המערכת: לפיו עובד
+      החיפוש הישיר, לפיו נשמרת ההגבלה על תור עתידי שני ב-patient_index,
+      ולפיו נבדקת רשימת הטיפול המיוחד. שינוי שלו בלי להזיז את התפיסה
+      היה משאיר את הנייד הישן נעול ואת החדש חופשי — כלומר אותו מטופל
+      יכול לקבוע תור שני, והישן חסום בלי סיבה.
+
+   המועד, המקדמה, הסימונים, הייחוס השיווקי והעתקה לאודורו — לא נוגעים.
+   ─────────────────────────────────────────────────────────────── */
+async function saveDetails(appt, data) {
+  const phone    = normPhone(data.phone);
+  const idn      = data.idnum ? normId(data.idnum) : '';
+  const oldPhone = normPhone(appt.patient_phone);
+  if (!phone) return { ok:false, msg:'מספר נייד לא תקין' };
+
+  /* מה בדיוק השתנה — נשמר על התור עצמו, כדי שאפשר יהיה לדעת בדיעבד
+     מי תיקן מה ומתי. אותו היגיון כמו moves[] בהזזה. */
+  const changes = [];
+  const diff = (field, before, after) => {
+    if ((before == null ? '' : String(before)) !== (after == null ? '' : String(after)))
+      changes.push({ field, before: before == null ? null : String(before),
+                            after:  after  == null ? null : String(after) });
+  };
+  diff('patient_first',     appt.patient_first,     data.first);
+  diff('patient_last',      appt.patient_last,      data.last);
+  diff('patient_phone',     appt.patient_phone,     phone);
+  diff('patient_id_number', appt.patient_id_number, idn || null);
+  if (!changes.length) return { ok:true, msg:'לא היה מה לשנות' };
+
+  const edits = (appt.edits || []).concat([{
+    at: Timestamp.now(),
+    by: auth.currentUser ? auth.currentUser.email : null,
+    changes
+  }]);
+
+  try {
+    await setDoc(doc(db, 'appointments', appt._id), {
+      patient_first:     data.first,
+      patient_last:      data.last,
+      patient_name:      (data.first + ' ' + data.last).trim(),
+      patient_phone:     phone,
+      phone_norm:        phone,
+      patient_id_number: idn || null,
+      id_norm:           idn || 'none',
+      updated_at:        Timestamp.now(),
+      edits
+    }, { merge: true });
+  } catch (e) { console.error('saveDetails', e); return { ok:false, msg:'השמירה נכשלה' }; }
+
+  let msg = 'הפרטים עודכנו';
+
+  /* ── העברת התפיסה ───────────────────────────────────────────── */
+  if (phone !== oldPhone) {
+    let had = false;
+    try {
+      if (oldPhone) {
+        const oldRef = doc(db, 'patient_index', oldPhone);
+        const snap   = await getDoc(oldRef);
+        if (snap.exists() && (snap.data() || {}).appointment_id === appt._id) {
+          had = true;
+          await deleteDoc(oldRef);
+        }
+      }
+      if (had) {
+        const newRef = doc(db, 'patient_index', phone);
+        const ex     = await getDoc(newRef);
+        if (ex.exists() && (ex.data() || {}).appointment_id !== appt._id) {
+          /* לא דורסים תפיסה של תור אחר — אבל אומרים את זה. */
+          msg = 'הפרטים עודכנו. ⚠️ לנייד החדש כבר רשום תור עתידי אחר';
+        } else {
+          await setDoc(newRef, {
+            phone,
+            appointment_id: appt._id,
+            active_until:   Timestamp.fromDate(claimUntil(dateOf(appt))),
+            updated_at:     Timestamp.now()
+          });
+        }
+      }
+    } catch (e) { console.error('claim move', e); msg = 'הפרטים עודכנו, אך העברת ההגבלה נכשלה'; }
+
+    /* הנייד החדש ברשימת הטיפול המיוחד? לא חוסמים — הצוות קבע במפורש —
+       אבל חייבים לומר, אחרת מטופל שהוגדר "לא לקבוע" יושב ביומן בשקט. */
+    try {
+      const sh = await getDoc(doc(db, 'special_handling', phone));
+      if (sh.exists()) msg += ' · ⚠️ הנייד נמצא ברשימת הטיפול המיוחד';
+    } catch (e) {}
+  }
+
+  return { ok:true, msg };
+}
+
 async function releaseClaim(appt) {
   const phone = normPhone(appt.patient_phone);
   if (!phone) return;
@@ -2481,6 +2574,14 @@ function cardHtml(a) {
   const moveBtn = (a.status === 'cancelled' || isRxTask(a)) ? '' :
     '<button data-act="move" data-id="'+a._id+'">🕐 עדכון מועד</button>';
 
+  /* ── עריכת פרטי מטופל ───────────────────────────────────────────
+     המטופל ממלא את הפרטים בעצמו בעת הקביעה, ולעיתים חלקית: בלי שם
+     משפחה, בלי ת"ז, או עם שגיאת הקלדה בנייד. עד 10.2026 לא הייתה
+     שום דרך לתקן — הכרטיס היה נעול לחלוטין, והמידע הנכון נשאר רק
+     בראש של מי שדיבר איתו. */
+  const editBtn = a.status === 'cancelled' ? '' :
+    '<button data-act="edit" data-id="'+a._id+'">✏️ עריכת פרטים</button>';
+
   if (a.status === 'cancelled') {
     if (a.cancel_reason)
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
@@ -2503,7 +2604,7 @@ function cardHtml(a) {
         chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
         odoroBtn(f.copied_at) +
-        moveBtn +
+        moveBtn + editBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
   } else {
@@ -2519,7 +2620,7 @@ function cardHtml(a) {
            : f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
                             : wa('first','💬 הודעה ראשונה','go')) +
         odoroBtn(f.paid_entered_at) +
-        moveBtn +
+        moveBtn + editBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">'+esc(TXT.cb3)+'</button></div>';
   }
@@ -2954,6 +3055,7 @@ function wire(host) {
     if (!a) return;
     b.onclick = () => ({ cancel:cancelAppt, revive:reviveAppt, follow:openManual,
                          move:(x)=>openManual(x, null, 'move'),
+                         edit:(x)=>openManual(x, null, 'edit'),
                          odoro:(x)=>copyAct('open', x._id) }[b.dataset.act])(a);
   });
   // לחיצה על ערך בודד מעתיקה רק אותו
@@ -2994,7 +3096,9 @@ function openManual(from, preset, mode) {
   /* mode === 'move' — הזזת תור קיים במקום יצירת חדש. אותו חלון בדיוק,
      כדי שלוגיקת בחירת השעות תישאר במקום אחד. שכפול שלה היה מזמין
      סטייה בין שני המסלולים, וזה בדיוק סוג הבאג שכבר נשרפנו בו. */
-  const moving = mode === 'move' ? from : null;
+  const moving  = mode === 'move' ? from : null;
+  /* עריכת פרטים — אותו חלון, בלי בורר תאריך ושעה. המועד לא נוגע. */
+  const editing = mode === 'edit' ? from : null;
   const cur    = moving ? dateOf(moving) : null;
 
   const pick = { date: moving ? isoOf(cur) : ((preset && preset.date) || isoOf(state.day)),
@@ -3004,12 +3108,15 @@ function openManual(from, preset, mode) {
 
   host.innerHTML =
   '<div class="modal"><div class="sheet">' +
-    '<h2>'+(moving ? 'עדכון מועד התור' : from ? 'תור המשך' : 'הוספת תור ידנית')+'</h2>' +
+    '<h2>'+(moving ? 'עדכון מועד התור' : editing ? 'עריכת פרטי המטופל'
+                   : from ? 'תור המשך' : 'הוספת תור ידנית')+'</h2>' +
     '<div class="sub">'+(
       moving ? esc(moving.patient_name) + ' · כעת ' +
                DOW[cur.getDay()] + ' ' + cur.getDate() + '.' + (cur.getMonth()+1) +
                ' בשעה ' + hhmmOf(cur) + ' · ' + (moving.slot_duration_min||0) + ' דק׳<br>' +
                'אודורו הוא הקובע — כאן מתאימים את בוקינג אליו. המקדמה, הסימונים והייחוס נשמרים.'
+             : editing ? 'התור עצמו אינו משתנה — רק פרטי המטופל. ' +
+                         'שינוי הנייד מעביר גם את ההגבלה על תור עתידי שני.'
              : from ? 'הפרטים הועתקו מ'+esc(from.patient_name)
                     : 'התור ייפתח במצב מטופל — הצוות כבר סגר את הפרטים')+'</div>' +
     '<div class="row"'+(moving?' style="display:none"':'')+'>' +
@@ -3023,14 +3130,14 @@ function openManual(from, preset, mode) {
     '<div class="err" id="ePhone">מספר נייד לא תקין</div>' +
     '<label>מספר זהות (לא חובה)</label><input id="mId" inputmode="numeric" value="'+esc(from&&from.patient_id_number?from.patient_id_number:'')+'">' +
     '</div>' +
-    '<label class="chk rxchk"'+(moving?' style="display:none"':'')+'><input type="checkbox" id="mRx">' +
+    '<label class="chk rxchk"'+((moving||editing)?' style="display:none"':'')+'><input type="checkbox" id="mRx">' +
       '<span>חידוש מרשם בלבד — משימה ללא שעה</span></label>' +
     '<div id="mRxInfo" class="rxinfo" style="display:none"></div>' +
     '<div id="mRxNoteWrap" style="display:none">' +
       '<label>הערה לרופא (תרופה, תשלום, כל דבר אחר)</label>' +
       '<textarea id="mRxNote" placeholder="למשל: סיאליס 5 מ״ג, שילם בביט"></textarea>' +
     '</div>' +
-    '<div id="mTimed">' +
+    '<div id="mTimed"'+(editing?' style="display:none"':'')+'>' +
     '<label>משך התור</label><select id="mDur">' +
       Object.entries(CFG.durations).map(([m,n]) =>
         '<option value="'+m+'"'+(String(m)===String(pick.duration)?' selected':'')+'>'+esc(n)+'</option>').join('') +
@@ -3044,7 +3151,7 @@ function openManual(from, preset, mode) {
     '<div class="err" id="eSlot">נא לבחור שעה</div>' +
     '<label>הערה (לא חובה)</label><textarea id="mNote"></textarea>' +
     '</div>' +
-    '<button class="go" id="mSave">שמור תור</button>' +
+    '<button class="go" id="mSave">'+(editing?'שמור פרטים':'שמור תור')+'</button>' +
     '<button class="cancel" id="mCancel">ביטול</button>' +
   '</div></div>';
 
@@ -3156,6 +3263,26 @@ function openManual(from, preset, mode) {
   if (moving) $('mSave').textContent = 'עדכן מועד';
 
   $('mSave').onclick = async () => {
+    /* ── עריכת פרטי מטופל ─────────────────────────────────────────
+       אותה ולידציה כמו בתור ידני. המועד, הסימונים, המקדמה והייחוס
+       אינם נוגעים. */
+    if (editing) {
+      const first = $('mFirst').value.trim(), last = $('mLast').value.trim();
+      const phone = $('mPhone').value.trim(), idnum = $('mId').value.replace(/\D/g,'');
+      let bad = false;
+      const mark = (id, on) => { $(id).classList.toggle('on', on); if (on) bad = true; };
+      mark('eFirst', !first);
+      mark('eLast',  !last);
+      mark('ePhone', !normPhone(phone));
+      if (bad) return;
+      const btn = $('mSave'); btn.disabled = true; btn.textContent = 'שומר…';
+      const res = await saveDetails(editing, { first, last, phone, idnum });
+      btn.disabled = false; btn.textContent = 'שמור פרטים';
+      if (res.ok) { close(); toast(res.msg || 'הפרטים עודכנו'); }
+      else toast(res.msg || 'השמירה נכשלה');
+      return;
+    }
+
     /* ── הזזת תור קיים ─────────────────────────────────────────────
        אין כאן ולידציה על פרטי מטופל: הם לא נערכים, רק המועד. */
     if (moving) {
