@@ -3239,6 +3239,10 @@ function openManual(from, preset, mode) {
      ל-1.10 ומשימה שנקבעה עכשיו פשוט לא נראתה. */
   let rxDay = null;
   const paintRx = () => {
+    /* ⚠️ בעריכת פרטים אין בורר תאריך ואין מסלול מרשם. הפונקציה הזו
+       מאפסת את display של mTimed בכל קריאה, ולכן בלי היציאה המוקדמת
+       היא הייתה מחזירה את בלוק התאריך למסך מיד אחרי שהוסתר. */
+    if (editing) return;
     const on = $('mRx').checked;
     $('mTimed').style.display      = on ? 'none' : '';
     $('mRxNoteWrap').style.display = on ? '' : 'none';
