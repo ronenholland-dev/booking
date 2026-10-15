@@ -2193,7 +2193,7 @@ function paintTimeline() {
      חייב להופיע. אם אי פעם ייפתח מסלול חדש שמפספס תור, כאן
      הוא ייתפס. */
   const shown = new Set();
-  const card  = (a) => { shown.add(a._id); return cardHtml(a); };
+  const card  = (a, outOfHours) => { shown.add(a._id); return cardHtml(a, outOfHours); };
 
   const rx = appts.filter(a => isRxTask(a) && a.status !== 'cancelled' && rxDayIso(a) === iso);
   if (rx.length) {
@@ -2236,15 +2236,27 @@ function paintTimeline() {
   /* תורים שנקבעו מחוץ לשעות הפעילות מוצגים בנפרד, כדי שלא ייעלמו.
      משימות מרשם אינן משתתפות — הן כבר הוצגו בראש היום, ואין להן
      שעה שתציב אותן בתוך הציר או מחוצה לו. */
+  /* ── למה אין יותר "מחוץ לשעות הפעילות" בתחתית ──────────────────
+     קודם תור שנפל מחוץ לחלון הקביעה הוצג בסוף היום, מתחת לכל השאר.
+     לזה לא הייתה שום סיבה קלינית — רק סיבה טכנית: ציר הזמן נבנה בין
+     שעת הפתיחה לשעת הסגירה, ולתור מחוץ להן לא היה מקום במבנה.
+
+     אבל יום העבודה במרפאה אינו נגמר בשעת הקביעה. תור ב-08:00 הוא
+     הראשון של היום, גם אם האפליקציה פותחת ב-09:30. דחיפה שלו לתחתית
+     היא בדיוק מה שגרם לפספס מטופל ב-27.9.2026.
+
+     עכשיו הציר נמתח לפי מה שיש בו בפועל, וכל התורים מופיעים לפי
+     השעה. מה שמחוץ לשעות מסומן בתווית על הכרטיס.
+     ⚠️ רצועות "פנוי" ממשיכות להיות מוצגות אך ורק בתוך שעות הקביעה —
+        מחוץ להן אין מה להציע. */
   const timed   = dayAppts.filter(a => !isRxTask(a));
-  const inside  = w ? timed.filter(a => startOf(a) >= openM && startOf(a) < closeM) : [];
-  const outside = w ? timed.filter(a => !(startOf(a) >= openM && startOf(a) < closeM)) : timed;
+  const outside = w ? [] : timed;
 
   if (w) {
     /* תורים ואירועים פעילים נכנסים לאותו ציר זמן, ממוינים יחד.
        אירוע מוצג בשעות שלו; החיץ סביבו נופל לתוך ה"פנוי" ומצויר שם
        כרצועה חסומה — כך שהשעה שרואים היא שעת הפגישה האמיתית. */
-    const occ = inside.map(a => ({
+    const occ = timed.map(a => ({
         at: startOf(a), to: startOf(a) + (a.slot_duration_min || 30), appt: a }));
     eventsFor(d).forEach((ev, i) => {
       if (ev.cancelled || !ev.start || !ev.end) return;
@@ -2252,18 +2264,29 @@ function paintTimeline() {
     });
     occ.sort((x, y) => x.at - y.at);
 
-    let cursor = openM;
+    /* הציר נמתח כדי לכסות גם מה שמחוץ לשעות — אבל לא מתכווץ מתחתן. */
+    const spanStart = Math.min(openM, ...occ.map(x => x.at));
+    const spanEnd   = Math.max(closeM, ...occ.map(x => x.to));
+    const outOfHours = (min) => min < openM || min >= closeM;
+
+    let cursor = spanStart;
     const q = occ.slice();
-    while (cursor < closeM) {
+    while (cursor < spanEnd) {
       const next = q[0];
       if (next && next.at <= cursor) {
-        html += next.appt ? card(next.appt) : eventHtml(next.ev, iso, next.evIdx);
+        html += next.appt ? card(next.appt, outOfHours(next.at))
+                          : eventHtml(next.ev, iso, next.evIdx);
         cursor = Math.max(cursor + 1, next.to);
         q.shift();
         continue;
       }
-      const gapEnd = next ? Math.min(next.at, closeM) : closeM;
-      if (gapEnd > cursor) html += gapHtml(cursor, gapEnd, blocked, labelFor);
+      const gapEnd = next ? Math.min(next.at, spanEnd) : spanEnd;
+      if (gapEnd > cursor) {
+        /* חיתוך לשעות הקביעה: "פנוי · 30 דק׳" לפני הפתיחה או אחרי
+           הסגירה הוא הזמנה לקבוע תור בזמן שאינו קיים. */
+        const from = Math.max(cursor, openM), to = Math.min(gapEnd, closeM);
+        if (to > from) html += gapHtml(from, to, blocked, labelFor);
+      }
       cursor = gapEnd;
     }
 
@@ -2529,7 +2552,7 @@ function freeHtml(fromMin, toMinEnd) {
 const MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני',
                 'יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
 
-function cardHtml(a) {
+function cardHtml(a, outOfHours) {
   if (isRxTask(a)) return rxCardHtml(a);
   const st = statusOf(a), f = a.flags || {}, d = dateOf(a);
   const manual = a.source === 'manual';
@@ -2537,7 +2560,10 @@ function cardHtml(a) {
 
   const badges = [];
   if (manual) badges.push('<span class="badge manual">תור ידני</span>');
-  if (a.off_hours) badges.push('<span class="badge late">מחוץ לשעות הקבלה</span>');
+  /* התווית נקבעת גם לפי מה שנמדד בציר בפועל, ולא רק לפי השדה.
+     off_hours נכתב רק כשכופים שעה ידנית; תור מהאפליקציה שנפל מחוץ
+     לחלון — למשל אחרי שינוי בלוז — לא היה מסומן כלל. */
+  if (a.off_hours || outOfHours) badges.push('<span class="badge late">מחוץ לשעות הקבלה</span>');
   if (a.last_visit) badges.push('<span class="badge ret">🔄 ביקור אחרון: '+esc(a.last_visit)+'</span>');
   if (st === 'red') badges.push('<span class="badge late">מעל שעתיים ללא תגובה</span>');
   if (a.lead_source && a.lead_source !== 'staff')
