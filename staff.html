@@ -94,6 +94,12 @@ body{font-family:'Heebo',-apple-system,'Segoe UI',Arial,sans-serif;
   width:38px;height:38px;font-size:17px;color:var(--navy);cursor:pointer;font-family:inherit}
 .daynav .lbl{font-weight:700;color:var(--navy);min-width:130px;text-align:center;font-size:15px}
 .daynav button#dToday{width:auto;padding:0 12px;font-size:14px;font-weight:600}
+.card.rx.fu .hd .name{color:#1f6f5c}
+.fuinfo{margin:6px 0 2px;padding:8px 10px;border-radius:8px;background:#eef6f3;
+  font-size:14px;color:var(--navy)}
+.fuform label{display:block;margin-top:10px;font-weight:600;font-size:14px;color:var(--navy)}
+.fuform .rowx{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fuform .rowx label{margin-top:0;font-weight:500}
 .dayhours{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;
   padding:12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc}
 .dayhours label{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--navy);font-weight:600}
@@ -762,7 +768,7 @@ const rxIsOpen = (a) => !(a.flags || {}).rx_done_at && a.status !== 'cancelled';
 /* מה כתוב בפינת התאריך של כרטיס משימה */
 function rxWhenLabel(a) {
   const done = (a.flags || {}).rx_done_at;
-  if (done) return 'בוצעה ' + dayLabel(stampOf(done));
+  if (done) return (isFollowupTask(a) ? 'נקבעה ' : 'בוצעה ') + dayLabel(stampOf(done));
   const start = clinicISO(dateOf(a));
   if (start > clinicToday()) return 'מ־' + dayLabel(dateOf(a));
   return 'ללא שעה';
@@ -1101,6 +1107,71 @@ async function reviveAppt(a) {
    סלוט ולכן אין מה לנעול, ואין סיכון להתנגשות. השעה נקבעת ל-00:00
    ומשמשת לקיבוץ לפי יום בלבד; היא לעולם אינה מוצגת.
    ─────────────────────────────────────────────────────────────── */
+/* ── משימת "לקבוע ביקורת" ─────────────────────────────────────────
+   נוצרת מכרטיס של תור קיים בסוף הביקור. היא **משימה ולא תור**, ולכן
+   נושאת rx_task:true — אותו דגל שמפעיל את כל הלוגיקה הקיימת: אינה
+   תופסת סלוט, צפה קדימה מדי יום עד שמסומנת, ומוצגת בראש היומן.
+
+   task_kind מבדיל בינה לבין חידוש מרשם. משימה בלי השדה הזה היא
+   מרשם — כך שכל המשימות שנוצרו לפני 26.10.2026 ממשיכות לעבוד.
+
+   ⚠️ תאריך ההתחלה הוא **היום**, לא תאריך היעד. ההחלטה הייתה שהמשימה
+   תופיע מיד ותצוף עד שתטופל — עדיף להעמיס מעט על היומן מאשר שביקורת
+   תיזכר רק ביום שבו כבר היה צריך לקבוע אותה. target_date הוא המלצה
+   שמוצגת על הכרטיס ונטענת לחלון הקביעה, לא מועד הופעה. */
+async function createFollowupTask(from, data) {
+  const id = crypto.randomUUID();
+  const t = clinicToday().split('-').map(Number);
+  const today = clinicDate(t[0], t[1], t[2], 0, 0);
+
+  const target = new Date(today.getTime() + data.weeks * 7 * 864e5);
+  const targetIso = clinicISO(target);
+
+  const n = splitName(from);
+  const phone = normPhone(from.patient_phone) || String(from.patient_phone || '');
+
+  const appt = {
+    id, created_at: Timestamp.now(),
+    slot_start: Timestamp.fromDate(today),
+    slot_duration_min: 0,
+    rx_task: true,
+    task_kind: 'followup',
+    followup_type:     data.type,              // 'frontal' | 'phone'
+    followup_weeks:    data.weeks,
+    followup_duration: data.duration,          // נטען לחלון הקביעה
+    followup_subject:  data.subject || null,   // פנימי בלבד
+    target_date:       targetIso,
+    source_appt_id:    from._id || null,
+    visit_track: 'follow',
+    service_code: 'R',
+    patient_first: n.first, patient_last: n.last,
+    patient_name: (n.first + ' ' + n.last).trim(),
+    patient_phone: phone,
+    phone_norm: normPhone(from.patient_phone) || null,
+    patient_id_number: from.patient_id_number || null,
+    id_norm: from.patient_id_number ? normId(from.patient_id_number) : 'none',
+    patient_note: null,
+    staff_note: data.subject || null,
+    status: 'pending', status_changed_at: null,
+    cancel_reason: null, cancel_code: null,
+    cancelled_by: null, cancelled_at: null,
+    off_hours: false,
+    source: 'manual', created_by: auth.currentUser ? auth.currentUser.email : null,
+    flags: {},
+    lead_source: 'staff', utm: {}, gclid: null, click_id_type: null,
+    referrer: null, device: 'staff',
+    first_touch_at: null, reentry_src: null, attribution_recovered: false,
+    conversion_sent: false, offline_uploaded: false
+  };
+
+  try {
+    await setDoc(doc(db, 'appointments', id), appt);
+    return { ok: true, targetIso };
+  } catch (e) { console.error('createFollowupTask', e); return { ok: false }; }
+}
+
+const isFollowupTask = (a) => !!(a && a.rx_task && a.task_kind === 'followup');
+
 async function createRxTask(data) {
   /* חצות בשעון המרפאה. זהו תאריך ההתחלה של המשימה — ממנו ואילך
      היא צפה קדימה עד שתסומן. ראו rxDayIso. */
@@ -2608,6 +2679,12 @@ function cardHtml(a, outOfHours) {
   const editBtn = a.status === 'cancelled' ? '' :
     '<button data-act="edit" data-id="'+a._id+'">✏️ עריכת פרטים</button>';
 
+  /* ── נא לקבוע ביקורת ────────────────────────────────────────────
+     נלחץ בסוף הביקור, מהכרטיס של המטופל. פותח ארבע שאלות ויוצר
+     משימה צפה — במקום מלל חופשי שאיש אינו מוזן לפעול לפיו. */
+  const fuBtn = (a.status === 'cancelled' || isRxTask(a)) ? '' :
+    '<button data-act="followup" data-id="'+a._id+'">🔁 נא לקבוע ביקורת</button>';
+
   if (a.status === 'cancelled') {
     if (a.cancel_reason)
       badges.push('<span class="badge">סיבת ביטול: '+esc(a.cancel_reason)+'</span>');
@@ -2630,7 +2707,7 @@ function cardHtml(a, outOfHours) {
         chk(a._id,'copied_at',TXT.cbManual,f.copied_at) + '</div>' +
       '<div class="acts">' +
         odoroBtn(f.copied_at) +
-        moveBtn + editBtn +
+        moveBtn + editBtn + fuBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">ביטול</button></div>';
   } else {
@@ -2646,7 +2723,7 @@ function cardHtml(a, outOfHours) {
            : f.contacted_at ? wa('reminder','💬 תזכורת', st==='red'?'go':'')
                             : wa('first','💬 הודעה ראשונה','go')) +
         odoroBtn(f.paid_entered_at) +
-        moveBtn + editBtn +
+        moveBtn + editBtn + fuBtn +
         '<button data-act="follow" data-id="'+a._id+'">קבע תור המשך</button>' +
         '<button data-act="cancel" data-id="'+a._id+'">'+esc(TXT.cb3)+'</button></div>';
   }
@@ -2705,11 +2782,21 @@ function rxCardHtml(a) {
     ? '<span class="v" data-copy="'+esc(v)+'" title="לחיצה מעתיקה">'+esc(v)+'</span>'
     : '<span class="v none">—</span>';
 
-  return '<div class="card rx '+(done?'green':'orange')+'" data-card="'+a._id+'">' +
+  const fu = isFollowupTask(a);
+  const typeLbl = a.followup_type === 'phone' ? 'טלפוני' : 'פרונטלי';
+
+  return '<div class="card rx '+(fu?'fu ':'')+(done?'green':'orange')+'" data-card="'+a._id+'">' +
     '<div class="hd">' +
       '<span class="when">' + esc(rxWhenLabel(a)) + '</span>' +
-      '<span class="name">חידוש מרשם · משימה</span>' +
+      '<span class="name">' +
+        (fu ? 'ביקורת לקביעה · ' + esc(typeLbl) : 'חידוש מרשם · משימה') +
+      '</span>' +
     '</div>' +
+    (fu ? '<div class="fuinfo">' +
+            '<b>מומלץ בסביבות ' + esc(dayLabel(new Date(a.target_date+'T12:00:00'))) + '</b>' +
+            ' · ' + esc(String(a.followup_duration || 20)) + ' דק׳' +
+            ' · בעוד ' + esc(String(a.followup_weeks)) + ' שבועות מהביקור' +
+          '</div>' : '') +
     '<div class="fields">' +
       '<div class="row">' +
         '<span class="f"><span class="k">שם פרטי:</span>'  + val(n.first) + '</span>' +
@@ -2723,12 +2810,17 @@ function rxCardHtml(a) {
       (a.patient_id_number ? '<div class="row"><span class="f"><span class="k">מספר זהות:</span>' +
         val(a.patient_id_number) + '</span></div>' : '') +
     '</div>' +
-    (a.staff_note ? '<div class="note"><b>הערת המרפאה:</b><br>'+esc(a.staff_note)+'</div>' : '') +
+    (a.staff_note ? '<div class="note"><b>' + (fu ? 'נושא הביקורת' : 'הערת המרפאה') +
+        ':</b><br>'+esc(a.staff_note)+'</div>' : '') +
     '<div class="checks">' +
       (a.created_at ? doneRow('המשימה נרשמה', a.created_at) : '') +
-      chk(a._id, 'rx_done_at', 'המרשם חודש', f.rx_done_at) +
+      chk(a._id, 'rx_done_at', fu ? 'הביקורת נקבעה' : 'המרשם חודש', f.rx_done_at) +
     '</div>' +
     '<div class="acts">' +
+      /* הכפתור פותח את חלון הקביעה הרגיל עם הפרטים והמשך כבר טעונים,
+         ובשמירה מוצלחת סוגר את המשימה לבד. הצ'קבוקס שלמעלה נשאר
+         כרשת ביטחון למקרה שהתור נקבע ישירות באודורו. */
+      (fu && !done ? '<button class="primary" data-act="fubook" data-id="'+a._id+'">📅 קבע עכשיו</button>' : '') +
       '<button data-act="cancel" data-id="'+a._id+'">ביטול משימה</button>' +
     '</div>' +
   '</div>';
@@ -3082,6 +3174,10 @@ function wire(host) {
     b.onclick = () => ({ cancel:cancelAppt, revive:reviveAppt, follow:openManual,
                          move:(x)=>openManual(x, null, 'move'),
                          edit:(x)=>openManual(x, null, 'edit'),
+                         followup:(x)=>openFollowup(x),
+                         fubook:(x)=>openManual(x, { date: x.target_date,
+                                                     duration: x.followup_duration,
+                                                     followupTaskId: x._id }),
                          odoro:(x)=>copyAct('open', x._id) }[b.dataset.act])(a);
   });
   // לחיצה על ערך בודד מעתיקה רק אותו
@@ -3118,6 +3214,74 @@ function wire(host) {
    7. תור ידני / תור המשך
    כשמגיעים מכרטיס קיים — פרטי המטופל מועתקים אוטומטית, בלי הקלדה.
    ══════════════════════════════════════════════════════════════════ */
+/* ── חלון "נא לקבוע ביקורת" ───────────────────────────────────────
+   ארבע שאלות, ומתוכן נוצרת משימה צפה. הפרטים של המטופל נלקחים
+   מהכרטיס ואינם נשאלים שוב.
+
+   סוג הביקורת ומספר השבועות הם מה שהמטופל יכול לדעת; המשך ונושא
+   הביקורת הם פנימיים ואינם יוצאים לשום מסמך. */
+function openFollowup(from) {
+  const host = $('modalHost');
+  const n = splitName(from);
+
+  host.innerHTML =
+  '<div class="modal"><div class="sheet">' +
+    '<h2>נא לקבוע ביקורת</h2>' +
+    '<div class="sub">' + esc((n.first + ' ' + n.last).trim()) +
+      ' · ' + esc(String(from.patient_phone || '')) + '<br>' +
+      'תיווצר משימה ביומן. היא תופיע מהיום ותעבור מעצמה ליום הבא עד שתיקבע.' +
+    '</div>' +
+    '<div class="fuform">' +
+      '<label>סוג הביקורת</label>' +
+      '<div class="rowx">' +
+        '<label><input type="radio" name="fuType" value="frontal" checked> פרונטלי</label>' +
+        '<label><input type="radio" name="fuType" value="phone"> טלפוני</label>' +
+      '</div>' +
+      '<label>בעוד כמה שבועות</label>' +
+      '<input id="fuWeeks" type="number" min="1" max="104" value="6" style="width:110px">' +
+      '<div class="err" id="eWeeks">נא למלא מספר שבועות בין 1 ל-104</div>' +
+      '<label>משך הביקורת</label>' +
+      '<select id="fuDur">' +
+        Object.entries(CFG.durations).map(([m,nm]) =>
+          '<option value="'+m+'"'+(m==='20'?' selected':'')+'>'+esc(nm)+'</option>').join('') +
+      '</select>' +
+      '<label>נושא הביקורת <span class="opt">(פנימי — לא יוצא למטופל)</span></label>' +
+      '<textarea id="fuSubject" rows="2" placeholder="למשל: בדיקת תוצאות דם, הערכת תגובה לטיפול"></textarea>' +
+    '</div>' +
+    '<button class="go" id="fuSave">צור משימה</button>' +
+    '<button class="cancel" id="fuCancel">ביטול</button>' +
+  '</div></div>';
+
+  const close = () => { host.innerHTML = ''; };
+  $('fuCancel').onclick = close;
+  host.querySelector('.modal').onclick = (e) => { if (e.target.classList.contains('modal')) close(); };
+
+  /* ברירת מחדל נוחה: טלפוני הוא בדרך כלל סלוט קצר. לא נעול — אפשר
+     לשנות, כי גם שיחה יכולה לקחת רבע שעה. */
+  host.querySelectorAll('[name=fuType]').forEach(r => r.onchange = () => {
+    $('fuDur').value = r.value === 'phone' ? '10' : '20';
+  });
+
+  $('fuSave').onclick = async () => {
+    const weeks = parseInt($('fuWeeks').value, 10);
+    const bad = !(weeks >= 1 && weeks <= 104);
+    $('eWeeks').classList.toggle('on', bad);
+    if (bad) return;
+
+    const type = (host.querySelector('[name=fuType]:checked') || {}).value || 'frontal';
+    const btn = $('fuSave'); btn.disabled = true; btn.textContent = 'שומר…';
+    const res = await createFollowupTask(from, {
+      type, weeks, duration: +$('fuDur').value,
+      subject: $('fuSubject').value.trim()
+    });
+    btn.disabled = false; btn.textContent = 'צור משימה';
+    if (res.ok) {
+      close();
+      toast('נוצרה משימה — ביקורת מומלצת בסביבות ' + res.targetIso.split('-').reverse().join('.'));
+    } else toast('יצירת המשימה נכשלה');
+  };
+}
+
 function openManual(from, preset, mode) {
   /* mode === 'move' — הזזת תור קיים במקום יצירת חדש. אותו חלון בדיוק,
      כדי שלוגיקת בחירת השעות תישאר במקום אחד. שכפול שלה היה מזמין
@@ -3129,7 +3293,10 @@ function openManual(from, preset, mode) {
 
   const pick = { date: moving ? isoOf(cur) : ((preset && preset.date) || isoOf(state.day)),
                  time: moving ? hhmmOf(cur) : ((preset && preset.time) || null),
-                 duration: moving ? (moving.slot_duration_min || 20) : 20 };
+                 /* preset.duration — נטען ממשימת ביקורת. קודם הוא נזרק
+                    בשקט וכל חלון נפתח על 20. */
+                 duration: moving ? (moving.slot_duration_min || 20)
+                                  : ((preset && +preset.duration) || 20) };
   const host = $('modalHost');
 
   host.innerHTML =
@@ -3369,7 +3536,19 @@ function openManual(from, preset, mode) {
     });
     btn.disabled = false; btn.textContent = 'שמור תור';
 
-    if (res.ok) { close(); toast(TXT.saved); }
+    if (res.ok) {
+      close();
+      /* נקבע מתוך משימת ביקורת — סוגרים אותה כאן ולא מחכים לצ'קבוקס.
+         אם הסגירה נכשלת, התור כבר נשמר ואסור להציג כישלון: המשימה
+         תישאר פתוחה ועתליה תסמן ידנית. */
+      if (preset && preset.followupTaskId) {
+        try {
+          await setDoc(doc(db,'appointments',preset.followupTaskId),
+                       { flags: { rx_done_at: Timestamp.now() } }, { merge: true });
+          toast('התור נקבע והמשימה נסגרה');
+        } catch (e) { console.error('followup close', e); toast(TXT.saved + ' — סמנו את המשימה ידנית'); }
+      } else toast(TXT.saved);
+    }
     else { toast(res.taken ? TXT.noSlot : 'השמירה נכשלה'); paintSlots(); }
   };
 }
