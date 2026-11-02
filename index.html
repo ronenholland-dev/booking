@@ -877,42 +877,99 @@ const Cal = (() => {
     return occupied;
   }
 
-  /* ── כלל "המשך אחרי כל תור" ─────────────────────────────────────────
-     עוברים על היום ביחידות של 10 דקות. בכל נקודה פנויה בודקים אם יש
-     רצף פנוי באורך הביקור; אם כן — מציעים אותה וקופצים קדימה באורך
-     הביקור, כך שההצעה הבאה נופלת בדיוק על רגע הסיום. אם לא — מתקדמים
-     יחידה אחת ומנסים שוב.
+  /* ── בחירת השעות המוצעות ──────────────────────────────────────────
+     2.11.2026. הכלל: אל תציע שעה שמקטינה את מספר ביקורי 30 הדקות
+     שהיום עוד יכול לקלוט יותר ממה שהכרחי. מתוך אלה שעוברות:
 
-     התוצאה: יום ריק → 09:30, 10:00, 10:30 … ואילו אחרי ביקורת של 20
-     דקות ב-09:30, ההצעה הבאה תהיה 09:50 ולא 10:00. בלי זמן מבוזבז
-     ובלי חורים שאי אפשר למלא.
+       • ביקור של 30 דקות — מציעים את כולן. מקסימום בחירה למטופל
+         חדש ולמחלות מין, בלי לשלם דבר בקיבולת.
+       • ביקור קצר יותר — רק כאלה שמתחילות במקום שבו ביקור מלא
+         היה יכול להתחיל (מרחק שהוא כפולה של 30 מתחילת החלון
+         הפנוי), או שנצמדות לסופו. פחות אפשרויות, אבל אף אחת מהן
+         לא חותכת גוש באמצע.
+         בלי התנאי הזה ביום ריק לגמרי היו מוצעות שתי שעות בלבד —
+         שני קצוות היום — כי כל שעה אחרת מפצלת אותו לשניים.
+
+     הכלל מכייל את עצמו למצב היום: בגוש של 90 דקות יש בדיוק שלוש
+     אפשרויות צמודות לביקור של 30, כי כל סטייה הורגת ביקור; בגוש
+     של 80 יש 20 דקות עודף, הביקור יכול לצוף, ומוצעות שש.
+
+     ⚠️ זה החליף שרשרת קדימה (m += durationMin) שהתחילה בשעת
+     הפתיחה. השרשרת רק התקדמה, אף פעם לא חזרה אחורה, ולכן דילגה
+     על שעות שמסתיימות בדיוק כשהתור הבא מתחיל. ב-3.11.2026 היא
+     הציעה 09:10 ו-09:40 בלבד, ו-10:00 — שנצמד בדיוק לתור של
+     10:30 — לא נבדק מעולם כנקודת התחלה.
+
+     ⚠️ חייב להישאר תואם ל-unitsFor: שעה שמוצעת כאן תתפוס בדיוק
+        את היחידות שנבדקו כאן כפנויות.
      ─────────────────────────────────────────────────────────────── */
+  const FULL_VISIT_MIN = 30;         // אורך הביקור שעליו מגינים
+
+  /* הרצפים הפנויים בין startM לסגירה */
+  function freeRuns(startM, closeM, busy) {
+    const step = CONFIG.baseGridMin, runs = [];
+    let m = startM;
+    while (m < closeM) {
+      if (busy.has(unitKey(m))) { m += step; continue; }
+      const s = m;
+      while (m < closeM && !busy.has(unitKey(m))) m += step;
+      runs.push([s, m]);
+    }
+    return runs;
+  }
+
+  /* כמה ביקורים מלאים נכנסים ברשימת אורכים של חלונות פנויים */
+  const fullVisits = (lengths) =>
+    lengths.reduce((n, L) => n + Math.floor(L / FULL_VISIT_MIN), 0);
+
   function slotsFor(date, durationMin, occupiedUnits) {
     const w = windowFor(date);
     if (!w) return [];
 
     const step   = CONFIG.baseGridMin;
-    const needed = Math.ceil(durationMin / step);
-    const busy   = new Set(occupiedUnits || (CONFIG.demoMode ? demoUnits(iso(date), w) : []));
-    blockedFor(date).forEach(u => busy.add(u));   // חסימות ידניות ממסך ההגדרות
-    const limit  = Date.now() + CONFIG.minLeadHours * 3600 * 1000;
     const closeM = toMin(w.close);
-    const out    = [];
+    const busy   = new Set(occupiedUnits || (CONFIG.demoMode ? demoUnits(iso(date), w) : []));
+    blockedFor(date).forEach(u => busy.add(u));   // חסימות ידניות ואירועים
 
-    for (let m = toMin(w.open); m + durationMin <= closeM; ) {
-      let fits = true;
-      for (let k = 0; k < needed; k++) {
-        if (busy.has(unitKey(m + k*step))) { fits = false; break; }
+    /* ⚠️ מתחילים מהשעה הראשונה שעוברת את סף ההתראה המוקדמת, ולא
+       משעת הפתיחה — ובשעון המרפאה, לא בשעון המכשיר. שתי סיבות:
+       אחרת מטופל בחו"ל רואה שעות שכבר עברו, וחשוב מזה — זמן
+       שכבר עבר היה נספר בחישוב הקיבולת, "השעות הטובות ביותר"
+       היו יכולות להיות כולן בעבר, והיום היה נראה סגור לגמרי
+       במקום להציע את מה שעוד אפשר. */
+    const limit = Date.now() + CONFIG.minLeadHours * 3600 * 1000;
+    let startM  = toMin(w.open);
+    while (startM < closeM && clinicAt(date, toHHMM(startM)).getTime() < limit)
+      startM += step;
+    if (startM + durationMin > closeM) return [];
+
+    const runs = freeRuns(startM, closeM, busy);
+    const cand = [];
+    runs.forEach(([s, e], i) => {
+      const L = e - s;
+      if (L < durationMin) return;
+      const others = runs.filter((_, j) => j !== i).map(([S, E]) => E - S);
+      for (let o = 0; o <= L - durationMin; o += step) {
+        const left = o, right = L - durationMin - o;
+        const rest = others.concat(left  > 0 ? [left]  : [],
+                                   right > 0 ? [right] : []);
+        cand.push({ m: s + o,
+                    capacity: fullVisits(rest),
+                    aligned: (left % FULL_VISIT_MIN === 0) || (right === 0) });
       }
-      if (!fits) { m += step; continue; }
+    });
+    if (!cand.length) return [];
 
-      /* ⚠️ בשעון המרפאה, לא בשעון המכשיר. אחרת סף ההתראה המוקדמת
-         (minLeadHours) נמדד מול שעון אחר, ומטופל בחו"ל היה רואה
-         שעות שכבר עברו — או לא רואה שעות פנויות לגמרי. */
-      const when = clinicAt(date, toHHMM(m));
-      if (when.getTime() >= limit) out.push({ time: toHHMM(m) });
-      m += durationMin;                 // ההצעה הבאה — ברגע שהתור הזה נגמר
-    }
+    const best = Math.max.apply(null, cand.map(c => c.capacity));
+    let keep   = cand.filter(c => c.capacity === best);
+    if (durationMin < FULL_VISIT_MIN) keep = keep.filter(c => c.aligned);
+
+    const seen = new Set(), out = [];
+    keep.sort((a, b) => a.m - b.m).forEach(c => {
+      if (seen.has(c.m)) return;
+      seen.add(c.m);
+      out.push({ time: toHHMM(c.m) });
+    });
     return out;
   }
 
